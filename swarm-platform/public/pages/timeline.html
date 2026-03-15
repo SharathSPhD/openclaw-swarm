@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Timeline</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="timeline">
+  <main class="layout">
+    <header class="hero">
+      <h1>Execution Timeline</h1>
+      <p>Objective intake, team-lead orchestration, and subagent execution timeline.</p>
+      <div class="chips">
+        <span id="loadState" class="chip">load: unknown</span>
+        <span id="agentBudget" class="chip">agents: 0/0</span>
+        <span id="gpuState" class="chip">gpu: n/a</span>
+      </div>
+    </header>
+    <section class="grid two equal">
+      <article class="panel">
+        <h2>Objectives</h2>
+        <table>
+          <thead><tr><th>Objective</th><th>Team</th><th>Status</th><th>Updated</th></tr></thead>
+          <tbody id="objectivesBody"></tbody>
+        </table>
+      </article>
+      <article class="panel">
+        <h2>Live Events</h2>
+        <ul id="events"></ul>
+      </article>
+    </section>
+    <section class="panel">
+      <h2>Task Flow</h2>
+      <table>
+        <thead><tr><th>Task</th><th>Objective</th><th>Team</th><th>Role</th><th>Status</th><th>Model</th><th>Internal</th><th>Telegram</th><th>Updated</th></tr></thead>
+        <tbody id="flowBody"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

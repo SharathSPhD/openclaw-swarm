@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-swarm-bg text-gray-100 antialiased;
+    font-family: "IBM Plex Sans", "Inter", system-ui, sans-serif;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+}
+
+@layer components {
+  .panel {
+    @apply bg-swarm-surface border border-swarm-border rounded-lg p-4;
+  }
+  .chip {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .chip-normal { @apply bg-emerald-900/40 text-emerald-400; }
+  .chip-elevated { @apply bg-yellow-900/40 text-yellow-400; }
+  .chip-high { @apply bg-orange-900/40 text-orange-400; }
+  .chip-critical { @apply bg-red-900/40 text-red-400; }
+}

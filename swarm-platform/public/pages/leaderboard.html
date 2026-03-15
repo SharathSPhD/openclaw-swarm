@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leaderboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="leaderboard">
+  <main class="layout">
+    <header class="hero">
+      <h1>Leaderboard</h1>
+      <p>Team standings with score, accuracy, throughput, and penalties.</p>
+      <div class="chips">
+        <span id="loadState" class="chip">load: unknown</span>
+        <span id="gpuState" class="chip">gpu: n/a</span>
+      </div>
+    </header>
+    <section class="panel">
+      <table>
+        <thead><tr><th>#</th><th>Team</th><th>Score</th><th>Accuracy</th><th>Completed</th><th>Penalties</th></tr></thead>
+        <tbody id="leaderboardBody"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

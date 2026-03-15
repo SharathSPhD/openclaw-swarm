@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.log
+screenshots/
+worktrees/
+*.sqlite
+*.sqlite3
+.DS_Store
+.cache/
+package-lock.json

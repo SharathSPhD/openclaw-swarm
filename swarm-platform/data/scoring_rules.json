@@ -1,0 +1,17 @@
+{
+  "weights": {
+    "base": 100,
+    "correctness": 45,
+    "speed": 20,
+    "efficiency": 20,
+    "reproducibility": 10,
+    "firstPass": 10
+  },
+  "penalties": {
+    "taskFailed": 45,
+    "timeout": 35,
+    "policyViolation": 50,
+    "resourcePenaltyMultiplier": 2,
+    "manualPenaltyDefault": 25
+  }
+}

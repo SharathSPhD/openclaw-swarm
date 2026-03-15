@@ -1,0 +1,79 @@
+{
+  "generatedAt": "2026-03-15T12:43:14.046Z",
+  "samples": 2,
+  "prompt": "Summarize why low-latency models matter in one sentence.",
+  "models": {
+    "gpt-oss:120b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "nemotron-mini:4b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "deepseek-r1:8b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "deepseek-coder:6.7b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "qwen2.5:7b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "qwen2.5:14b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "qwen2.5-coder:7b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "llama3.1:8b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "llama3.2:3b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "mistral:7b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "gemma2:9b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "phi3:mini": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    },
+    "qwen2.5:3b": {
+      "available": true,
+      "runnable": false,
+      "reason": "warmup_failed"
+    }
+  },
+  "recommendations": {
+    "research": [],
+    "build": [],
+    "critic": [],
+    "integrator": [],
+    "program-lead": []
+  }
+}

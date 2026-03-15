@@ -1,0 +1,121 @@
+{
+  "generatedAt": "2026-03-15T12:55:00Z",
+  "sources": [
+    "https://ollama.com/library/gpt-oss:120b",
+    "https://ollama.com/library/deepseek-r1:8b",
+    "https://ollama.com/library/nemotron-mini:4b",
+    "https://ollama.com/library/qwen2.5:7b",
+    "https://ollama.com/library/llama3.2:3b",
+    "https://ollama.com/library/mistral:7b"
+  ],
+  "models": {
+    "phi3:mini": {
+      "family": "phi",
+      "sizeGb": 2.3,
+      "strengths": ["fast responses", "lightweight tool planning"],
+      "estimatedP50Ms": 520,
+      "estimatedAvgMs": 650,
+      "contextTokens": 128000,
+      "note": "Small model used for rapid low-latency tasks"
+    },
+    "llama3.2:3b": {
+      "family": "llama",
+      "sizeGb": 2.0,
+      "strengths": ["instruction following", "summarization", "multilingual"],
+      "estimatedP50Ms": 640,
+      "estimatedAvgMs": 780,
+      "contextTokens": 128000,
+      "note": "Good fast-tier generalist"
+    },
+    "nemotron-mini:4b": {
+      "family": "nemotron",
+      "sizeGb": 2.7,
+      "strengths": ["RAG QA", "function calling", "roleplay orchestration"],
+      "estimatedP50Ms": 700,
+      "estimatedAvgMs": 860,
+      "contextTokens": 4096,
+      "note": "NVIDIA-tuned small orchestrator model"
+    },
+    "qwen2.5:7b": {
+      "family": "qwen",
+      "sizeGb": 4.7,
+      "strengths": ["coding", "math", "structured outputs"],
+      "estimatedP50Ms": 820,
+      "estimatedAvgMs": 980,
+      "contextTokens": 128000,
+      "note": "Primary fast-tier research model"
+    },
+    "mistral:7b": {
+      "family": "mistral",
+      "sizeGb": 4.4,
+      "strengths": ["general chat", "function calling", "low footprint"],
+      "estimatedP50Ms": 860,
+      "estimatedAvgMs": 1040,
+      "contextTokens": 32768,
+      "note": "Reliable fallback for fast and standard tiers"
+    },
+    "deepseek-coder:6.7b": {
+      "family": "deepseek",
+      "sizeGb": 4.0,
+      "strengths": ["code generation", "refactoring", "repo reasoning"],
+      "estimatedP50Ms": 950,
+      "estimatedAvgMs": 1180,
+      "contextTokens": 16384,
+      "note": "Build-role optimized coder"
+    },
+    "qwen2.5-coder:7b": {
+      "family": "qwen-coder",
+      "sizeGb": 4.8,
+      "strengths": ["code planning", "agentic coding", "tool use"],
+      "estimatedP50Ms": 980,
+      "estimatedAvgMs": 1220,
+      "contextTokens": 128000,
+      "note": "Primary build-role model"
+    },
+    "llama3.1:8b": {
+      "family": "llama",
+      "sizeGb": 4.9,
+      "strengths": ["balanced reasoning", "critique", "long-form analysis"],
+      "estimatedP50Ms": 1080,
+      "estimatedAvgMs": 1320,
+      "contextTokens": 128000,
+      "note": "Primary critic role model"
+    },
+    "gemma2:9b": {
+      "family": "gemma",
+      "sizeGb": 5.5,
+      "strengths": ["summaries", "policy checks", "clarity"],
+      "estimatedP50Ms": 1180,
+      "estimatedAvgMs": 1420,
+      "contextTokens": 8192,
+      "note": "Alternative critic model"
+    },
+    "deepseek-r1:8b": {
+      "family": "deepseek-r1",
+      "sizeGb": 5.2,
+      "strengths": ["reasoning", "math", "program synthesis"],
+      "estimatedP50Ms": 1350,
+      "estimatedAvgMs": 1680,
+      "contextTokens": 32768,
+      "note": "Primary quality-tier integrator model"
+    },
+    "qwen2.5:14b": {
+      "family": "qwen",
+      "sizeGb": 9.0,
+      "strengths": ["higher quality reasoning", "code+analysis blend"],
+      "estimatedP50Ms": 1680,
+      "estimatedAvgMs": 2100,
+      "contextTokens": 128000,
+      "note": "Quality fallback when extra depth needed"
+    },
+    "gpt-oss:120b": {
+      "family": "gpt-oss",
+      "sizeGb": 65.0,
+      "strengths": ["agentic tasks", "deep reasoning", "complex synthesis"],
+      "estimatedP50Ms": 3300,
+      "estimatedAvgMs": 4200,
+      "contextTokens": 131072,
+      "note": "Use selectively for heavy integrator/program-lead escalations"
+    }
+  }
+}

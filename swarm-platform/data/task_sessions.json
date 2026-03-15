@@ -1,0 +1,224 @@
+{
+  "tasks": {
+    "5bf76fea-9cc0-41ee-80e6-8e1f61dca264": {
+      "role": "research",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:55:11.098Z",
+      "modelTier": "fast"
+    },
+    "e7c74fec-2c22-401f-bd27-84d289ce650f": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:55:11.099Z",
+      "modelTier": "standard"
+    },
+    "581aad59-79f3-43c7-8f06-a6b82fc201ba": {
+      "role": "research",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:55:16.407Z",
+      "modelTier": "fast"
+    },
+    "014c84ac-febd-4cf3-a106-86becfcfe0d8": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:55:16.409Z",
+      "modelTier": "standard"
+    },
+    "9af492f3-7949-44ba-ad77-62fa15a0b09d": {
+      "role": "research",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:55:46.923Z",
+      "modelTier": "fast"
+    },
+    "58a9b73e-fe4c-4d93-87d3-170d91cee7cc": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:56:04.449Z",
+      "modelTier": "standard"
+    },
+    "26521dde-99e7-47a6-a1f2-546dad8bccb0": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:57:05.797Z",
+      "modelTier": "standard"
+    },
+    "85622d7f-a6d0-4b96-8f7a-b35a15b5fec6": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:57:07.916Z",
+      "modelTier": "standard"
+    },
+    "0f98dcdf-7ee7-44d2-8201-d894ec5087c0": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:58:07.290Z",
+      "modelTier": "standard"
+    },
+    "a2cc6c48-2c56-45f4-99d1-06536280684d": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:58:16.661Z",
+      "modelTier": "standard"
+    },
+    "bb4029f3-2cef-40ef-ac60-03ea473cbb05": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:58:53.401Z",
+      "modelTier": "standard"
+    },
+    "cf505d23-6a23-4ec0-b0eb-cf395e702701": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "startedAt": "2026-03-15T10:59:25.412Z",
+      "modelTier": "standard"
+    },
+    "e57a4566-4754-4f81-bc1a-6b84b73cfb8a": {
+      "role": "research",
+      "teamId": "team-beta",
+      "task": "Use web_search for latest DGX Spark memory management best practices and return a 5-point actionable checklist",
+      "model": "gpt-oss:120b",
+      "startedAt": "2026-03-15T11:17:50.769Z",
+      "modelTier": "fast"
+    },
+    "251e4fc8-0618-4811-a95a-53769dd59811": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "task": "build secure release flow",
+      "model": "gpt-oss:120b",
+      "startedAt": "2026-03-15T11:18:48.630Z",
+      "modelTier": "standard"
+    },
+    "949bc820-8af2-40dd-a396-d278ffee88e8": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "task": "build secure release flow",
+      "model": "qwen2.5:7b",
+      "startedAt": "2026-03-15T12:06:28.789Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 750
+    },
+    "bfc5ef4d-6071-4c22-a3ca-ebfca0807a04": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "task": "build secure release flow",
+      "model": "qwen2.5:7b",
+      "startedAt": "2026-03-15T12:06:49.754Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 750
+    },
+    "7f984da8-1f61-41aa-89ec-c6b1de93a2da": {
+      "role": "research",
+      "teamId": "team-beta",
+      "task": "research low-latency model selection for DGX workload",
+      "model": "qwen2.5:7b",
+      "startedAt": "2026-03-15T12:10:45.890Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 750
+    },
+    "ecfdbc2b-bf00-4944-93be-020b6969a249": {
+      "role": "research",
+      "teamId": "team-beta",
+      "task": "research latest DGX memory contention mitigation strategies",
+      "model": "qwen2.5:7b",
+      "startedAt": "2026-03-15T12:15:41.633Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 750
+    },
+    "539b8d68-a61a-4ce6-864c-9cab0bc3776e": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "task": "build secure release flow",
+      "model": "qwen2.5-coder:7b",
+      "startedAt": "2026-03-15T13:24:34.854Z",
+      "modelTier": "standard",
+      "estimatedLatencyMs": null,
+      "actorRole": "team-lead",
+      "objectiveId": "539b8d68-a61a-4ce6-864c-9cab0bc3776e",
+      "objective": "build secure release flow"
+    },
+    "e9030c0d-bd64-4e04-8ba3-1f6d0345688e": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "task": "build secure release flow",
+      "model": "qwen2.5:7b",
+      "startedAt": "2026-03-15T14:13:25.645Z",
+      "modelTier": "standard",
+      "estimatedLatencyMs": 820,
+      "actorRole": "team-lead",
+      "objectiveId": "e9030c0d-bd64-4e04-8ba3-1f6d0345688e",
+      "objective": "build secure release flow"
+    },
+    "8ded85f6-8269-437b-984c-361d6cb42c7b": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "task": "build secure release flow",
+      "model": "qwen2.5:7b",
+      "startedAt": "2026-03-15T14:13:31.205Z",
+      "modelTier": "standard",
+      "estimatedLatencyMs": 820,
+      "actorRole": "team-lead",
+      "objectiveId": "8ded85f6-8269-437b-984c-361d6cb42c7b",
+      "objective": "build secure release flow"
+    },
+    "45e4b6e7-2608-4780-828a-b65122a6b028": {
+      "role": "integrator",
+      "teamId": "team-beta",
+      "task": "integrate final output for distributed training reliability and produce final plan",
+      "model": "qwen2.5:7b",
+      "startedAt": "2026-03-15T14:15:52.668Z",
+      "modelTier": "quality",
+      "estimatedLatencyMs": 820,
+      "actorRole": "program-lead",
+      "objectiveId": "45e4b6e7-2608-4780-828a-b65122a6b028",
+      "objective": "integrate final output for distributed training reliability and produce final plan"
+    },
+    "9beea4b5-4949-4339-bd33-d9eec343ef44": {
+      "role": "research",
+      "teamId": "team-beta",
+      "task": "research DGX Spark GPU scheduling best practices and summarize",
+      "model": "phi3:mini",
+      "startedAt": "2026-03-15T14:17:03.907Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 520,
+      "actorRole": "program-lead",
+      "objectiveId": "9beea4b5-4949-4339-bd33-d9eec343ef44",
+      "objective": "research DGX Spark GPU scheduling best practices and summarize"
+    },
+    "d8d5e11e-083b-4559-94e0-5460d6a1fc74": {
+      "role": "research",
+      "teamId": "team-beta",
+      "task": "research DGX Spark GPU scheduling best practices and summarize",
+      "model": "phi3:mini",
+      "startedAt": "2026-03-15T14:17:20.895Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 520,
+      "actorRole": "program-lead",
+      "objectiveId": "d8d5e11e-083b-4559-94e0-5460d6a1fc74",
+      "objective": "research DGX Spark GPU scheduling best practices and summarize"
+    },
+    "1199ee97-1fec-4de6-9f81-0b396be020b0": {
+      "role": "build",
+      "teamId": "team-alpha",
+      "task": "build secure release flow",
+      "model": "qwen2.5:7b",
+      "startedAt": "2026-03-15T14:54:21.224Z",
+      "modelTier": "standard",
+      "estimatedLatencyMs": 820,
+      "actorRole": "team-lead",
+      "objectiveId": "1199ee97-1fec-4de6-9f81-0b396be020b0",
+      "objective": "build secure release flow"
+    },
+    "67d520c7-d553-40a4-bca3-3c00bd227247": {
+      "role": "research",
+      "teamId": "team-alpha",
+      "task": "research and build pipeline",
+      "model": "phi3:mini",
+      "startedAt": "2026-03-15T14:54:27.894Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 520,
+      "actorRole": "team-lead",
+      "objectiveId": "67d520c7-d553-40a4-bca3-3c00bd227247",
+      "objective": "research and build pipeline"
+    }
+  }
+}

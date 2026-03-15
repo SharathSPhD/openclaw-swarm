@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ops</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="ops">
+  <main class="layout">
+    <header class="hero">
+      <h1>Operations Panel</h1>
+      <p>DGX GPU health, queue pressure, active processes, and model latency readiness.</p>
+      <div class="chips">
+        <span id="loadState" class="chip">load: unknown</span>
+        <span id="agentBudget" class="chip">agents: 0/0</span>
+        <span id="gpuState" class="chip">gpu: n/a</span>
+      </div>
+    </header>
+    <section class="grid two equal">
+      <article class="panel">
+        <h2>GPU Runtime Detail</h2>
+        <pre id="gpuDetail"></pre>
+      </article>
+      <article class="panel">
+        <h2>Queue Snapshot</h2>
+        <table>
+          <thead><tr><th>Team</th><th>Role</th><th>Task</th><th>Priority</th></tr></thead>
+          <tbody id="opsQueueBody"></tbody>
+        </table>
+      </article>
+    </section>
+    <section class="panel">
+      <h2>Model Latency Health</h2>
+      <table>
+        <thead><tr><th>Model</th><th>P50 (ms)</th><th>Avg (ms)</th><th>Status</th></tr></thead>
+        <tbody id="opsModelBody"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

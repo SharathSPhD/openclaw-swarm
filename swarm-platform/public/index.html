@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenClaw Swarm Command Center</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="command-center">
+  <main class="layout">
+    <header class="hero">
+      <h1>Swarm Mission Control</h1>
+      <p>Program lead to team lead to subagent chain, model usage, internal comms, and Telegram proof in one surface.</p>
+      <p><a href="/pages/leaderboard.html">Leaderboard</a> | <a href="/pages/timeline.html">Timeline</a> | <a href="/pages/audit.html">Audit</a> | <a href="/pages/ops.html">Ops</a></p>
+      <div class="chips">
+        <span id="loadState" class="chip">load: unknown</span>
+        <span id="agentBudget" class="chip">agents: 0/0 queue:0</span>
+        <span id="gpuState" class="chip">gpu: n/a</span>
+        <span id="runnerMode" class="chip">runner: unknown</span>
+        <span id="adminState" class="chip">controls: locked</span>
+      </div>
+    </header>
+
+    <section class="grid three">
+      <article class="panel">
+        <h2>Program Lead Controls</h2>
+        <div class="toolbar">
+          <button id="unlockControls" type="button">Unlock Controls</button>
+          <button id="lockControls" type="button" class="ghost">Lock</button>
+        </div>
+        <form id="dispatchForm">
+          <label>Team</label>
+          <select id="teamId"></select>
+          <label>Actor Role</label>
+          <select id="actorRole">
+            <option value="team-lead">team-lead</option>
+            <option value="program-lead">program-lead</option>
+          </select>
+          <label>Task</label>
+          <textarea id="taskText" rows="4" placeholder="Implement secure release pipeline with tests and audit notes"></textarea>
+          <button type="submit">Dispatch</button>
+        </form>
+        <hr />
+        <form id="autonomyForm">
+          <label>Autonomous Objective</label>
+          <textarea id="objectiveText" rows="3" placeholder="Build and validate a feature as a full team workflow"></textarea>
+          <label>Rounds</label>
+          <input id="rounds" type="number" min="1" max="6" value="4" />
+          <button type="submit">Start Autonomous Run</button>
+        </form>
+        <hr />
+        <form id="teamControlForm">
+          <label>Team Control</label>
+          <select id="controlAction">
+            <option value="pause">pause</option>
+            <option value="resume">resume</option>
+          </select>
+          <button type="submit">Apply Team Control</button>
+        </form>
+        <pre id="dispatchResult"></pre>
+      </article>
+
+      <article class="panel">
+        <h2>Active Subagents</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Team</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Model</th>
+              <th>Est Latency</th>
+              <th>Task</th>
+            </tr>
+          </thead>
+          <tbody id="agentsBody"></tbody>
+        </table>
+      </article>
+
+      <article class="panel">
+        <h2>Role-Model Matrix</h2>
+        <table>
+          <thead>
+            <tr><th>Role</th><th>Tier</th><th>Primary</th><th>Fallbacks</th></tr>
+          </thead>
+          <tbody id="roleMatrixBody"></tbody>
+        </table>
+        <h3>Installed Models and Latency</h3>
+        <table>
+          <thead>
+            <tr><th>Model</th><th>Size</th><th>Tier/Role</th><th>Latency P50</th><th>Last Modified</th></tr>
+          </thead>
+          <tbody id="modelsBody"></tbody>
+        </table>
+      </article>
+    </section>
+
+    <section class="grid two equal">
+      <article class="panel">
+        <h2>Objective Board</h2>
+        <table>
+          <thead>
+            <tr><th>Objective</th><th>Team</th><th>Status</th><th>Updated</th></tr>
+          </thead>
+          <tbody id="objectivesBody"></tbody>
+        </table>
+      </article>
+
+      <article class="panel">
+        <h2>Internal Team Comms</h2>
+        <label>Team Chat Filter</label>
+        <select id="chatTeamFilter"></select>
+        <ul id="teamChats"></ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Task Flow Timeline</h2>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Objective</th><th>Team</th><th>Role</th><th>Status</th><th>Model</th><th>Internal</th><th>Telegram</th><th>Updated</th></tr>
+        </thead>
+        <tbody id="flowBody"></tbody>
+      </table>
+    </section>
+
+    <section class="grid two equal">
+      <article class="panel">
+        <h2>GPU and Runtime Health</h2>
+        <pre id="gpuDetail"></pre>
+      </article>
+
+      <article class="panel">
+        <h2>Telegram Delivery Proof</h2>
+        <table>
+          <thead>
+            <tr><th>Time</th><th>Team</th><th>Type</th><th>Task</th><th>Chat</th><th>Msg ID</th></tr>
+          </thead>
+          <tbody id="telegramBody"></tbody>
+        </table>
+      </article>
+    </section>
+
+    <section class="grid two equal">
+      <article class="panel">
+        <h2>Rewards and Penalties Clarity</h2>
+        <ul id="rewardPenalty"></ul>
+      </article>
+
+      <article class="panel">
+        <h2>OpenClaw Localhost Access</h2>
+        <pre id="openclawInfo"></pre>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Live Event Feed</h2>
+      <ul id="events"></ul>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

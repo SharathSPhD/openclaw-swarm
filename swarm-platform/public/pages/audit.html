@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Audit</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="audit">
+  <main class="layout">
+    <header class="hero">
+      <h1>Audit Trail</h1>
+      <p>Event-by-event trace of objective creation, orchestration, model selection, and delivery.</p>
+      <div class="chips">
+        <span id="loadState" class="chip">load: unknown</span>
+        <span id="runnerMode" class="chip">runner: unknown</span>
+      </div>
+    </header>
+    <section class="panel">
+      <table>
+        <thead><tr><th>Time</th><th>Team</th><th>Type</th><th>Task</th><th>Source</th><th>Detail</th></tr></thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

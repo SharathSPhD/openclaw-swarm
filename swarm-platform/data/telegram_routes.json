@@ -1,0 +1,15 @@
+{
+  "defaultChatId": "8679892510",
+  "routes": {
+    "team-alpha": {
+      "default": "8679892510",
+      "research": "8679892510",
+      "build": "8679892510",
+      "critic": "8679892510",
+      "integrator": "8679892510"
+    },
+    "team-beta": {
+      "default": "8679892510"
+    }
+  }
+}

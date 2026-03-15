@@ -1,0 +1,30 @@
+{
+  "teams": [
+    {
+      "id": "team-alpha",
+      "name": "Team Alpha",
+      "lead": "alpha-lead",
+      "leaderRole": "team-lead",
+      "programLead": "program-lead",
+      "roles": [
+        "research",
+        "build",
+        "critic",
+        "integrator"
+      ]
+    },
+    {
+      "id": "team-beta",
+      "name": "Team Beta",
+      "lead": "beta-lead",
+      "leaderRole": "team-lead",
+      "programLead": "program-lead",
+      "roles": [
+        "research",
+        "build",
+        "critic",
+        "integrator"
+      ]
+    }
+  ]
+}
