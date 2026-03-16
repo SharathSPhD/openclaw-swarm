@@ -314,7 +314,8 @@ export class CompetitiveCoordinator {
         betaResult,
         evaluation,
         gammaResult,
-        mergeInfo
+        mergeInfo,
+        category: this.currentObjective?.category || "unknown"
       };
 
       // Team Learning: analyze round and provide cross-team feedback
@@ -350,6 +351,7 @@ export class CompetitiveCoordinator {
           const postRoundLeaderboard = this.store?.getLeaderboard?.() || [];
           const postRoundTotalScore = postRoundLeaderboard.reduce((sum, r) => sum + (r.score || 0), 0);
           const category = this.currentObjective?.category || "unknown";
+          const scoreGained = postRoundTotalScore - preRoundTotalScore;
           await this.objectivePerformanceTracker.recordObjectiveImpact({
             objectiveId,
             category,
@@ -357,8 +359,9 @@ export class CompetitiveCoordinator {
             after: { totalScore: postRoundTotalScore },
             lessons
           });
+          console.log(`[competitive] ROI tracked: category=${category}, scoreGain=${scoreGained}, lessons=${lessons?.length || 0}`);
         } catch (err) {
-          console.warn("[competitive] ROI tracking failed:", err?.message);
+          console.error("[competitive] ROI tracking failed:", err?.message, err?.stack);
         }
       }
 

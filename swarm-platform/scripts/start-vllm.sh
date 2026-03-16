@@ -1,32 +1,27 @@
 #!/usr/bin/env bash
-# start-vllm.sh - Start vLLM OpenAI-compatible server on DGX Spark GB10
+# start-vllm.sh - Start vLLM server via NVIDIA official Docker container
 # Usage: ./scripts/start-vllm.sh [model_id] [port]
 #
-# Default: Qwen/Qwen2.5-14B-Instruct on port 8000
-# Once running, configure openclaw.json with:
-#   "dgx-llm": { "baseUrl": "http://127.0.0.1:8000/v1", ... }
+# Default: nvidia/Qwen3-14B-FP8 on port 8000
+# Requires: docker, NVIDIA Container Toolkit
+# Image: nvcr.io/nvidia/vllm:25.11-py3 (requires driver 570+, works on DGX Spark)
+#
+# Supported models (from https://build.nvidia.com/spark/vllm):
+#   nvidia/Qwen3-14B-FP8         - Best coordinator/evaluator model
+#   nvidia/Qwen3-8B-FP8          - Faster alternative
+#   nvidia/Llama-3.1-8B-Instruct-FP8
+#   nvidia/Nemotron-Super-49B-v1-FP8
 
 set -euo pipefail
 
-MODEL="${1:-Qwen/Qwen2.5-14B-Instruct}"
+MODEL="${1:-nvidia/Qwen3-14B-FP8}"
 PORT="${2:-8000}"
-VENV="${HOME}/vllm-env"
-HF_CACHE="${HOME}/.cache/huggingface"
+CONTAINER_NAME="vllm-server"
+IMAGE="nvcr.io/nvidia/vllm:25.11-py3"
 
-echo "[vLLM] Starting server for model: $MODEL on port $PORT"
-echo "[vLLM] CUDA: $(nvcc --version 2>/dev/null | grep release | head -1 || echo 'check nvcc')"
-echo "[vLLM] venv: $VENV"
-
-if [ ! -f "$VENV/bin/python" ]; then
-  echo "[vLLM] ERROR: venv not found at $VENV"
-  echo "       Run: python3 -m venv ~/vllm-env --copies && ~/vllm-env/bin/pip install vllm==0.17.1"
-  exit 1
-fi
-
-if ! "$VENV/bin/python" -c "import vllm" 2>/dev/null; then
-  echo "[vLLM] Installing vLLM..."
-  "$VENV/bin/pip" install vllm==0.17.1 -q
-fi
+echo "[vLLM] Starting Docker-based vLLM server"
+echo "[vLLM] Model: $MODEL  Port: $PORT"
+echo "[vLLM] Image: $IMAGE"
 
 # Check if port already in use
 if lsof -i ":$PORT" >/dev/null 2>&1; then
@@ -35,24 +30,29 @@ if lsof -i ":$PORT" >/dev/null 2>&1; then
   exit 0
 fi
 
-echo "[vLLM] Launching OpenAI-compatible API server..."
-echo "[vLLM] Endpoint will be: http://127.0.0.1:$PORT/v1"
-echo "[vLLM] Expected throughput: ~70 tok/s for 14B on GB10 (vs ~10 tok/s Ollama)"
+# Stop existing container if present
+docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-# vLLM was compiled against CUDA 12; use Ollama's bundled CUDA 12 runtime.
-# System has CUDA 13 (GB10 Blackwell) but Ollama ships libcudart.so.12 at v12.8.90
-# which is ABI-compatible with what vLLM expects.
-TORCH_LIB="$VENV/lib/python3.12/site-packages/torch/lib"
-OLLAMA_CUDA="/usr/local/lib/ollama/cuda_v12"
-export LD_LIBRARY_PATH="$TORCH_LIB:$OLLAMA_CUDA:${LD_LIBRARY_PATH:-}"
+echo "[vLLM] Launching container..."
+docker run -d \
+  --gpus all \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -p "${PORT}:8000" \
+  --name "$CONTAINER_NAME" \
+  --restart unless-stopped \
+  "$IMAGE" \
+  vllm serve "$MODEL" --enforce-eager
 
-exec "$VENV/bin/python" -m vllm.entrypoints.openai.api_server \
-  --model "$MODEL" \
-  --host 127.0.0.1 \
-  --port "$PORT" \
-  --dtype auto \
-  --max-model-len 32768 \
-  --gpu-memory-utilization 0.7 \
-  --trust-remote-code \
-  --served-model-name "$MODEL" \
-  2>&1 | tee "/tmp/vllm-server-$(date +%Y%m%d-%H%M%S).log"
+echo "[vLLM] Container started. Waiting for readiness..."
+for i in $(seq 1 60); do
+  if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    echo "[vLLM] Server ready at http://127.0.0.1:${PORT}/v1"
+    echo "[vLLM] Test: curl http://127.0.0.1:${PORT}/v1/models"
+    exit 0
+  fi
+  sleep 5
+done
+echo "[vLLM] WARNING: Server did not become ready in 5 minutes."
+echo "       Check logs: docker logs $CONTAINER_NAME"

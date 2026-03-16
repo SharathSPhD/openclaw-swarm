@@ -349,6 +349,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 // vLLM / backend status - checks if fast inference backend is available
+// Backend: NVIDIA official Docker container (nvcr.io/nvidia/vllm:26.02-py3)
+// Start: scripts/start-vllm.sh  |  Stop: docker rm -f vllm-server
 let vllmStatusCache = { available: false, checkedAt: 0, model: null };
 async function checkVllmHealth() {
   const vllmUrl = process.env.VLLM_BASE_URL || "http://127.0.0.1:8000/v1";
@@ -360,7 +362,7 @@ async function checkVllmHealth() {
     if (res.ok) {
       const data = await res.json();
       const models = data?.data?.map(m => m.id) || [];
-      vllmStatusCache = { available: true, checkedAt: Date.now(), url: vllmUrl, models };
+      vllmStatusCache = { available: true, checkedAt: Date.now(), url: vllmUrl, models, provider: "dgx-vllm" };
     } else {
       vllmStatusCache = { available: false, checkedAt: Date.now(), url: vllmUrl, error: `HTTP ${res.status}` };
     }
