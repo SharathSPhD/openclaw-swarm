@@ -136,12 +136,14 @@ export class WorktreeManager {
         .split("\n")
         .filter(Boolean)
         .map(line => line.trim().replace(/^[^\s]+\s+/, ""))
-        .filter(f => f.startsWith("swarm-platform/"));
+        .filter(f => f.startsWith("swarm-platform/"))
+        // Exclude runtime data files — only commit source code and config
+        .filter(f => !f.startsWith("swarm-platform/data/") && !f.endsWith(".jsonl"));
 
       if (changedFiles.length === 0) return { changedFiles: [], committed: false };
 
-      // Stage and commit only swarm-platform changes
-      this._git("add", "swarm-platform/");
+      // Stage only source files, not data directory
+      this._git("add", "swarm-platform/src/", "swarm-platform/ui/src/", "swarm-platform/tests/");
       const msg = `feat: gamma implements ${description.slice(0, 80)} [${objectiveId.slice(0, 8)}]`;
       this._git("commit", "-m", msg);
 
