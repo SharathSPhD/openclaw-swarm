@@ -939,6 +939,30 @@
       "actorRole": "team-lead",
       "objectiveId": "b4826473-61d3-479b-b885-dbe139463682",
       "objective": "research and build pipeline"
+    },
+    "150da48f-8ede-4bb2-bf28-fe958b91da35": {
+      "role": "research",
+      "teamId": "team-alpha",
+      "task": "research and build pipeline",
+      "model": "phi3:mini",
+      "startedAt": "2026-03-16T12:45:05.123Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 520,
+      "actorRole": "team-lead",
+      "objectiveId": "150da48f-8ede-4bb2-bf28-fe958b91da35",
+      "objective": "research and build pipeline"
+    },
+    "866ed5a6-6734-4743-8490-bef1b74eaef8": {
+      "role": "research",
+      "teamId": "team-alpha",
+      "task": "research and build pipeline",
+      "model": "phi3:mini",
+      "startedAt": "2026-03-16T12:48:36.332Z",
+      "modelTier": "fast",
+      "estimatedLatencyMs": 520,
+      "actorRole": "team-lead",
+      "objectiveId": "866ed5a6-6734-4743-8490-bef1b74eaef8",
+      "objective": "research and build pipeline"
     }
   }
 }

@@ -30,12 +30,20 @@ test.before(async () => {
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
-  await wait(1500);
+  let ready = false;
+  for (let i = 0; i < 12; i++) {
+    await wait(300);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) { ready = true; break; }
+    } catch { /* retry */ }
+  }
+  if (!ready) throw new Error("Server did not start");
 });
 
 test.after(async () => {
   if (proc) proc.kill("SIGTERM");
-  await wait(500);
+  await wait(1000);
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
