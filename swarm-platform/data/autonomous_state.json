@@ -1,1 +1,16 @@
-{"categoryIndex": 1, "templateIndexes": {}, "updatedAt": "2026-03-16T13:15:00Z"}
+{
+  "categoryIndex": 3,
+  "templateIndexes": {
+    "test_coverage": 0,
+    "security_audit": 0,
+    "error_handling": 0,
+    "api_design": 0,
+    "performance_profiling": 0,
+    "documentation": 0,
+    "code_deduplication": 0,
+    "dependency_audit": 0,
+    "edge_cases": 0,
+    "observability": 0
+  },
+  "updatedAt": "2026-03-16T14:08:55.770Z"
+}
