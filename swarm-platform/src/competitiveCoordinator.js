@@ -273,7 +273,7 @@ export class CompetitiveCoordinator {
         try {
           if (alphaResult.finalOutput) {
             await this.ragPipeline.addDocument({
-              title: `Alpha output: ${objective.slice(0, 60)}`,
+              title: `${winnerTeam === "team-alpha" ? "WINNER " : ""}Alpha output: ${objective.slice(0, 60)}`,
               content: alphaResult.finalOutput,
               category: 'output',
               source: 'competitive-round',
@@ -284,7 +284,7 @@ export class CompetitiveCoordinator {
           }
           if (betaResult.finalOutput) {
             await this.ragPipeline.addDocument({
-              title: `Beta output: ${objective.slice(0, 60)}`,
+              title: `${winnerTeam === "team-beta" ? "WINNER " : ""}Beta output: ${objective.slice(0, 60)}`,
               content: betaResult.finalOutput,
               category: 'output',
               source: 'competitive-round',
@@ -339,6 +339,24 @@ export class CompetitiveCoordinator {
             phase: "competitive"
           }
         })).catch(() => {});
+      }
+
+      // Save Gamma's implementation to RAG corpus
+      if (this.ragPipeline && gammaResult?.finalOutput) {
+        try {
+          await this.ragPipeline.addDocument({
+            title: `Gamma implementation: ${objective.slice(0, 60)}`,
+            content: gammaResult.finalOutput,
+            category: 'output',
+            source: 'gamma-implementation',
+            roundId: objectiveId,
+            teamId: 'team-gamma',
+            score: 90
+          });
+          console.log('[competitive] RAG: saved gamma implementation to corpus');
+        } catch (err) {
+          console.warn('[competitive] RAG save gamma failed:', err?.message);
+        }
       }
 
       // Gamma implements but does not earn competitive points (only logs work)
@@ -550,6 +568,29 @@ export class CompetitiveCoordinator {
           const alphaMem = [];
           const betaMem = [];
           
+          // Helper: Extract model usage from teamLearning performance records
+          const getModelsUsed = (teamId) => {
+            if (!this.teamLearning) return {};
+            const records = (this.teamLearning.performanceRecords || [])
+              .filter(r => r.roundId === objectiveId && r.teamId === teamId);
+            const modelMap = {};
+            for (const r of records) {
+              if (r.model) {
+                modelMap[r.model] = modelMap[r.model] || { calls: 0, successes: 0, failures: 0 };
+                modelMap[r.model].calls++;
+                if (r.success) modelMap[r.model].successes++;
+                else modelMap[r.model].failures++;
+              }
+            }
+            return modelMap;
+          };
+          
+          // Detect timeout/tool-failure patterns from results
+          if (alphaResult.status === "timeout") alphaMem.push("PATTERN: Task timed out - consider simpler approach or smaller scope");
+          if (alphaResult.status === "error") alphaMem.push("PATTERN: Tool call error - check API availability before starting");
+          if (betaResult.status === "timeout") betaMem.push("PATTERN: Task timed out - consider simpler approach or smaller scope");
+          if (betaResult.status === "error") betaMem.push("PATTERN: Tool call error - check API availability before starting");
+          
           // Extract lessons specific to each team
           if (lessons && lessons.length > 0) {
             for (const l of lessons) {
@@ -562,19 +603,49 @@ export class CompetitiveCoordinator {
             }
           }
           
-          // Add evaluation outcome as a lesson
-          const evalLesson = `Evaluation: ${evaluation.reasoning?.slice(0, 60) || ""} (score: α=${evaluation.alphaScore}, β=${evaluation.betaScore})`;
-          alphaMem.push(evalLesson);
-          betaMem.push(evalLesson);
+          // Add model usage insights for alpha
+          const alphaModels = getModelsUsed("team-alpha");
+          if (Object.keys(alphaModels).length > 0) {
+            for (const [model, stats] of Object.entries(alphaModels)) {
+              const successRate = stats.calls > 0 ? Math.round((stats.successes / stats.calls) * 100) : 0;
+              alphaMem.push(`Used ${model} x${stats.calls} (${stats.successes} ok, ${stats.failures} fail)`);
+              if (stats.failures > 0 && stats.successes === 0) {
+                alphaMem.push(`AVOID: ${model} failed all calls (${stats.failures}/${stats.calls})`);
+              }
+            }
+          }
           
-          // Record memories for both teams
+          // Add model usage insights for beta
+          const betaModels = getModelsUsed("team-beta");
+          if (Object.keys(betaModels).length > 0) {
+            for (const [model, stats] of Object.entries(betaModels)) {
+              const successRate = stats.calls > 0 ? Math.round((stats.successes / stats.calls) * 100) : 0;
+              betaMem.push(`Used ${model} x${stats.calls} (${stats.successes} ok, ${stats.failures} fail)`);
+              if (stats.failures > 0 && stats.successes === 0) {
+                betaMem.push(`AVOID: ${model} failed all calls (${stats.failures}/${stats.calls})`);
+              }
+            }
+          }
+          
+          // Add evaluation outcome and winning strategy as a lesson
+          alphaMem.push(`Evaluation: ${evaluation.reasoning?.slice(0, 60) || ""} (score: α=${evaluation.alphaScore}, β=${evaluation.betaScore})`);
+          if (winnerTeam === "team-alpha") {
+            alphaMem.push(`Winning strategy: ${evaluation.reasoning?.slice(0, 80) || "effective approach"}`);
+          }
+          
+          betaMem.push(`Evaluation: ${evaluation.reasoning?.slice(0, 60) || ""} (score: α=${evaluation.alphaScore}, β=${evaluation.betaScore})`);
+          if (winnerTeam === "team-beta") {
+            betaMem.push(`Winning strategy: ${evaluation.reasoning?.slice(0, 80) || "effective approach"}`);
+          }
+          
+          // Record memories for both teams with model tracking
           if (alphaMem.length > 0) {
             await this.agentMemory.recordMemory(
               "team-alpha",
               objectiveId,
               alphaMem,
               winnerTeam === "team-alpha" ? "success" : "failure",
-              { models: {}, score: evaluation.alphaScore || 0, category }
+              { models: alphaModels, score: evaluation.alphaScore || 0, category }
             );
           }
           
@@ -584,11 +655,11 @@ export class CompetitiveCoordinator {
               objectiveId,
               betaMem,
               winnerTeam === "team-beta" ? "success" : "failure",
-              { models: {}, score: evaluation.betaScore || 0, category }
+              { models: betaModels, score: evaluation.betaScore || 0, category }
             );
           }
           
-          console.log(`[competitive] Agent memories recorded: α=${alphaMem.length} lessons, β=${betaMem.length} lessons`);
+          console.log(`[competitive] Agent memories recorded: α=${alphaMem.length} lessons (models=${Object.keys(alphaModels).length}), β=${betaMem.length} lessons (models=${Object.keys(betaModels).length})`);
         } catch (err) {
           console.warn("[competitive] Failed to record agent memories:", err?.message);
         }

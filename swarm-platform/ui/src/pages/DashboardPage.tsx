@@ -9,6 +9,8 @@ import RoundHistoryChart from "../components/RoundHistoryChart";
 import GammaDiscoveriesPanel from "../components/GammaDiscoveriesPanel";
 import AgentCommunicationTrace from "../components/AgentCommunicationTrace";
 import CompetitiveBattleView from "../components/CompetitiveBattleView";
+import RoundBreakdownPanel from "../components/RoundBreakdownPanel";
+import ModelSplitChart from "../components/ModelSplitChart";
 import LogViewerPanel from "../components/LogViewerPanel";
 import type { SnapshotResponse, WsMessage, AgentInfo, SwarmEvent } from "../types";
 
@@ -643,6 +645,12 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
 
       {/* Main Competitive Battle View */}
       <CompetitiveBattleView lastMessage={lastMessage} competitiveStatus={competitiveStatus} />
+
+      {/* Team Internals: Recent Rounds & Model Split */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <RoundBreakdownPanel />
+        <ModelSplitChart />
+      </div>
 
       {/* Two-column: Agent Communication & Leaderboard */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

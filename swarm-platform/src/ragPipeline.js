@@ -285,4 +285,8 @@ export class RagPipeline {
       .match(/\b[a-z0-9]+\b/g)
       ?.filter(word => word.length > 2 && !STOPWORDS.has(word)) || [];
   }
+
+  async ingest(opts) {
+    return this.addDocument(opts);
+  }
 }
