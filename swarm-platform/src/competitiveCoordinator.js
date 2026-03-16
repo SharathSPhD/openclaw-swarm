@@ -1,5 +1,5 @@
 import { SwarmCoordinator } from "./coordinator.js";
-import { buildEvaluationPrompt, extractAndValidate } from "./structuredEvaluator.js";
+import { buildEvaluationPrompt, extractAndValidate, validateEvaluationResponse } from "./structuredEvaluator.js";
 import { ObjectivePerformanceTracker } from "./objectivePerformance.js";
 import { escapeMd } from "./telegramRelay.js";
 
@@ -779,8 +779,6 @@ export class CompetitiveCoordinator {
   }
 
   async _evaluateOutputs(alphaResult, betaResult, objective, objectiveId) {
-    const { spawn } = await import("node:child_process");
-
     const alphaOutput = alphaResult.status === "completed"
       ? (alphaResult.finalOutput || "(no output)").slice(0, 3000)
       : `FAILED: ${alphaResult.error || "unknown"}`;
@@ -789,112 +787,102 @@ export class CompetitiveCoordinator {
       ? (betaResult.finalOutput || "(no output)").slice(0, 3000)
       : `FAILED: ${betaResult.error || "unknown"}`;
 
-    // Include recent gamma discoveries in evaluation context
-    const recentDiscoveries = this.gammaDiscoveries.slice(-3)
-      .map(d => `${d.ts}: ${d.discoveries.slice(0, 100)}`)
-      .join("\n");
-    const gammaContext = recentDiscoveries
-      ? `\n\nGamma team recent discoveries (for context): ${recentDiscoveries}`
-      : "";
+    const prompt = buildEvaluationPrompt(alphaOutput, betaOutput, objective);
 
-    let prompt = buildEvaluationPrompt(alphaOutput, betaOutput, objective);
-    if (gammaContext) {
-      prompt += gammaContext;
-    }
+    const EVAL_MODELS = ["qwen2.5:14b", "llama3.1:8b", "qwen2.5:7b"];
 
-    return new Promise((resolve) => {
-      const args = ["agent", "--agent", "evaluator", "--message", prompt, "--json"];
-      const child = spawn("openclaw", args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env }
-      });
+    for (const model of EVAL_MODELS) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 90_000);
 
-      let stdout = "";
-      let done = false;
+        const response = await fetch("http://127.0.0.1:11434/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: "user", content: prompt }],
+            format: "json",
+            stream: false,
+            options: { temperature: 0.1, num_predict: 512 }
+          }),
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
 
-      const timer = setTimeout(() => {
-        if (!done) {
-          done = true;
-          child.kill("SIGTERM");
-          console.warn(`[competitive] Evaluation timed out for ${objectiveId}`);
-          resolve({
-            winner: "tie_timeout",
-            reasoning: "Evaluation timed out.",
-            alphaScore: alphaResult.status === "completed" ? 5 : 0,
-            betaScore: betaResult.status === "completed" ? 5 : 0,
-            timedOut: true
-          });
+        if (!response.ok) {
+          console.warn(`[competitive] Ollama eval returned ${response.status} for model ${model}`);
+          continue;
         }
-      }, this.timeoutMs);
 
-      child.stdout.on("data", (c) => { stdout += c.toString(); });
+        const result = await response.json();
+        const content = result?.message?.content;
+        if (!content) {
+          console.warn(`[competitive] Ollama eval empty content from ${model}`);
+          continue;
+        }
 
-      child.on("close", () => {
-        clearTimeout(timer);
-        if (done) return;
-        done = true;
+        let parsed;
+        try {
+          parsed = JSON.parse(content);
+        } catch {
+          parsed = extractAndValidate(content);
+        }
 
-        const parsed = extractAndValidate(stdout);
-
-        if (parsed) {
-          resolve({
+        if (parsed && validateEvaluationResponse(parsed)) {
+          console.log(`[competitive] LLM evaluation SUCCESS via ${model}: winner=${parsed.winner} (${parsed.alphaScore} vs ${parsed.betaScore})`);
+          return {
             winner: parsed.winner,
             reasoning: String(parsed.reasoning || ""),
             alphaScore: Number(parsed.alphaScore) || 0,
             betaScore: Number(parsed.betaScore) || 0
-          });
-          return;
+          };
         }
 
-        console.warn("[competitive] Evaluation parse failed for", objectiveId, "- raw:", stdout.slice(0, 200));
-        // Structured fallback: base decision on completion status and output length
-        const alphaCompleted = alphaResult.status === "completed";
-        const betaCompleted = betaResult.status === "completed";
-        if (alphaCompleted && !betaCompleted) {
-          resolve({ winner: "team-alpha", reasoning: "Beta failed; alpha completed.", alphaScore: 5, betaScore: 0 });
-        } else if (betaCompleted && !alphaCompleted) {
-          resolve({ winner: "team-beta", reasoning: "Alpha failed; beta completed.", alphaScore: 0, betaScore: 5 });
-        } else if (alphaCompleted && betaCompleted) {
-          // Both completed; use output length as tiebreaker
-          const alphaLen = (alphaResult.finalOutput || "").length;
-          const betaLen = (betaResult.finalOutput || "").length;
-          const lengthDiff = Math.abs(alphaLen - betaLen);
-          const tenPercentAlpha = alphaLen * 0.1;
-          
-          if (lengthDiff > tenPercentAlpha) {
-            // Significant difference: winner is team with more output
-            const winner = alphaLen > betaLen ? "team-alpha" : "team-beta";
-            const longer = Math.max(alphaLen, betaLen);
-            const shorter = Math.min(alphaLen, betaLen);
-            const pct = Math.round((longer / shorter - 1) * 100);
-            resolve({
-              winner,
-              reasoning: `Both completed; ${winner} has ${pct}% more output (length-based tiebreaker).`,
-              alphaScore: alphaLen > betaLen ? 5 : 3,
-              betaScore: betaLen > alphaLen ? 5 : 3
-            });
-          } else {
-            // Within 10% length: use objectiveId hash for consistent tie-breaking
-            const hash = objectiveId.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-            const winner = hash % 2 === 0 ? "team-alpha" : "team-beta";
-            resolve({
-              winner,
-              reasoning: `Both completed with similar output length (${alphaLen} vs ${betaLen} chars); hash-based selection (parse failure).`,
-              alphaScore: 4,
-              betaScore: 4
-            });
-          }
-        } else {
-          // Both failed
-          resolve({
-            winner: "tie_timeout",
-            reasoning: "Both teams failed; no winner.",
-            alphaScore: 0,
-            betaScore: 0
-          });
-        }
-      });
-    });
+        console.warn(`[competitive] Eval parse failed from ${model}, raw:`, content.slice(0, 200));
+      } catch (err) {
+        console.warn(`[competitive] Eval attempt with ${model} failed:`, err?.message);
+      }
+    }
+
+    console.warn(`[competitive] All eval models failed for ${objectiveId}, using structured fallback`);
+    return this._evaluationFallback(alphaResult, betaResult, objectiveId);
+  }
+
+  _evaluationFallback(alphaResult, betaResult, objectiveId) {
+    const alphaCompleted = alphaResult.status === "completed";
+    const betaCompleted = betaResult.status === "completed";
+
+    if (alphaCompleted && !betaCompleted) {
+      return { winner: "team-alpha", reasoning: "Beta failed; alpha completed.", alphaScore: 5, betaScore: 0 };
+    }
+    if (betaCompleted && !alphaCompleted) {
+      return { winner: "team-beta", reasoning: "Alpha failed; beta completed.", alphaScore: 0, betaScore: 5 };
+    }
+    if (alphaCompleted && betaCompleted) {
+      const alphaLen = (alphaResult.finalOutput || "").length;
+      const betaLen = (betaResult.finalOutput || "").length;
+      const lengthDiff = Math.abs(alphaLen - betaLen);
+
+      if (lengthDiff > alphaLen * 0.1) {
+        const winner = alphaLen > betaLen ? "team-alpha" : "team-beta";
+        return {
+          winner,
+          reasoning: `Both completed; ${winner} produced more substantive output (fallback).`,
+          alphaScore: alphaLen > betaLen ? 5 : 3,
+          betaScore: betaLen > alphaLen ? 5 : 3
+        };
+      }
+      const hash = objectiveId.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+      const winner = hash % 2 === 0 ? "team-alpha" : "team-beta";
+      return {
+        winner,
+        reasoning: `Both completed with similar output; hash-based tiebreaker (all eval models failed).`,
+        alphaScore: 4,
+        betaScore: 4
+      };
+    }
+    return { winner: "tie_timeout", reasoning: "Both teams failed; no winner.", alphaScore: 0, betaScore: 0 };
   }
 
   async _implementWinner(winnerResult, objective, objectiveId) {
