@@ -14,32 +14,28 @@ import LeaderboardPage from "./pages/LeaderboardPage";
 import ConfigPage from "./pages/ConfigPage";
 
 const NAV_ITEMS = [
-  { to: "/", label: "Dashboard", icon: "⚡" },
-  { to: "/objectives", label: "Objectives", icon: "🎯" },
-  { to: "/timeline", label: "Timeline", icon: "📊" },
-  { to: "/ops", label: "Ops", icon: "🔧" },
-  { to: "/audit", label: "Audit", icon: "📋" },
-  { to: "/telegram", label: "Telegram", icon: "💬" },
-  { to: "/leaderboard", label: "Leaderboard", icon: "🏆" },
+  { to: "/", label: "Dashboard", icon: "📊" },
+  { to: "/competition", label: "Competition", icon: "⚔️" },
+  { to: "/agents", label: "Agents", icon: "🤖" },
   { to: "/config", label: "Config", icon: "⚙️" },
 ];
 
 export default function App() {
   const { lastMessage, connected } = useWebSocket();
   const { data: snapshot } = useApi<SnapshotResponse>("/api/snapshot", 5000);
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(() => {
+    const stored = localStorage.getItem("swarm-theme");
+    return stored !== null ? stored === "dark" : true; // default to dark
+  });
 
-  // Initialize dark mode from localStorage on mount
+  // Apply dark mode class on mount and when isDark changes
   useEffect(() => {
-    const saved = localStorage.getItem("swarm-theme");
-    const prefersDark = saved ? saved === "dark" : true;
-    setIsDark(prefersDark);
-    if (prefersDark) {
+    if (isDark) {
       document.documentElement.classList.add("dark");
     } else {
       document.documentElement.classList.remove("dark");
     }
-  }, []);
+  }, [isDark]);
 
   const toggleDarkMode = () => {
     const newDark = !isDark;
@@ -114,6 +110,8 @@ export default function App() {
         <div className="flex-1 p-6 overflow-auto">
           <Routes>
             <Route path="/" element={<DashboardPage snapshot={snapshot} lastMessage={lastMessage} />} />
+            <Route path="/competition" element={<ObjectivesPage />} />
+            <Route path="/agents" element={<OpsPage snapshot={snapshot} />} />
             <Route path="/objectives" element={<ObjectivesPage />} />
             <Route path="/timeline" element={<TimelinePage />} />
             <Route path="/ops" element={<OpsPage snapshot={snapshot} />} />

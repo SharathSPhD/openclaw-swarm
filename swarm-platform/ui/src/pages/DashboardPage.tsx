@@ -9,6 +9,7 @@ import RoundHistoryChart from "../components/RoundHistoryChart";
 import GammaDiscoveriesPanel from "../components/GammaDiscoveriesPanel";
 import AgentCommunicationTrace from "../components/AgentCommunicationTrace";
 import CompetitiveBattleView from "../components/CompetitiveBattleView";
+import LogViewerPanel from "../components/LogViewerPanel";
 import type { SnapshotResponse, WsMessage, AgentInfo, SwarmEvent } from "../types";
 
 interface DashboardPageProps {
@@ -16,36 +17,6 @@ interface DashboardPageProps {
   lastMessage: WsMessage | null;
 }
 
-function SystemStatusBar({ snapshot }: { snapshot: SnapshotResponse | null }) {
-  const gpu = snapshot?.system?.gpu;
-  if (!gpu) {
-    return (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="panel flex items-center gap-4">
-          <span className="text-swarm-muted">GPU: N/A</span>
-        </div>
-        <ModelLatencyChart snapshot={snapshot} />
-      </div>
-    );
-  }
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="panel flex flex-wrap items-center gap-4">
-        <span className="text-sm font-medium">GPU</span>
-        <span className="text-swarm-muted">
-          {gpu.usedMb ?? 0} / {gpu.totalMb ?? 0} MB ({gpu.usedPct ?? 0}%)
-        </span>
-        <span className="text-swarm-muted">Util: {gpu.utilPct ?? 0}%</span>
-        {gpu.devices?.map((d) => (
-          <span key={d.index} className="chip chip-normal">
-            GPU {d.index}: {(d.usedMb ?? 0)}MB
-          </span>
-        ))}
-      </div>
-      <ModelLatencyChart snapshot={snapshot} />
-    </div>
-  );
-}
 
 function DispatchControls() {
   const [teamId, setTeamId] = useState("team-alpha");
@@ -637,31 +608,55 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <DashboardHeader connected={connected} />
+
+      {/* Objectives & Metrics */}
       <ObjectivePipeline />
-      <SystemStatusBar snapshot={snapshot} />
       <MetricsPanel />
+
+      {/* Main Competitive Battle View */}
+      <CompetitiveBattleView lastMessage={lastMessage} competitiveStatus={competitiveStatus} />
+
+      {/* Two-column: Agent Communication & Leaderboard */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="panel">
+          <h3 className="text-sm font-semibold mb-3">Agent Communication Trace</h3>
+          <AgentCommunicationTrace />
+        </div>
+        <div className="panel">
+          <h3 className="text-sm font-semibold mb-3">Team Leaderboard</h3>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {agents.length > 0 ? (
+              <div className="text-xs space-y-1">
+                {agents.slice(0, 10).map((a) => (
+                  <div key={a.taskId} className="flex items-center justify-between pb-1 border-b border-swarm-border/30">
+                    <span className="text-swarm-muted">{a.teamId}</span>
+                    <span className="chip chip-normal text-[10px]">{a.role}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-swarm-muted text-xs">No active agents</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Additional detailed panels */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <AutonomyStatus />
         <LearningPulse />
       </div>
-      <CompetitiveBattleView lastMessage={lastMessage} competitiveStatus={competitiveStatus} />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <DispatchControls />
-        <TeamTopology agents={agents} competitiveStatus={competitiveStatus} />
-      </div>
-      <ActiveAgentsTable agents={agents} />
-      <AgentReasoningLog lastMessage={lastMessage} />
-      <RoundHistoryChart />
+
+      {/* Discoveries and Topology */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <GammaDiscoveriesPanel />
-        <AgentCommunicationTrace />
+        <TeamTopology agents={agents} competitiveStatus={competitiveStatus} />
       </div>
-      <RecentAgentActivity events={events} />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <EventStream events={events} />
-        <LearningPanel />
-      </div>
+
+      {/* Log Viewer at bottom */}
+      <LogViewerPanel lines={50} autoRefresh={true} />
     </div>
   );
 }

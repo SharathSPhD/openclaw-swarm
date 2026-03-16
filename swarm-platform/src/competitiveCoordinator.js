@@ -62,6 +62,19 @@ export class CompetitiveCoordinator {
     }
   }
 
+  async _safeTelegramSend(text) {
+    if (!this.telegramBot || !this.chatId) return;
+    try {
+      await this.telegramBot.sendMessage(this.chatId, text, "MarkdownV2");
+    } catch (err) {
+      // MarkdownV2 failed, try plain text fallback
+      try {
+        const plain = text.replace(/[\\*_`\[\]()~>#+=|{}.!\-]/g, '').replace(/\n\n+/g, '\n');
+        await this.telegramBot.sendMessage(this.chatId, plain.slice(0, 4000), "Markdown");
+      } catch { /* silent */ }
+    }
+  }
+
   async executeCompetitiveObjective({ objective, objectiveId, category = "unknown" }) {
     const roundStartTime = Date.now();
     this.currentObjective = { objectiveId, objective, category, phase: "forking" };
@@ -694,7 +707,7 @@ Your task:
       `Category: \`${catEscaped}\`\n` +
       `Objective: _${objEscaped}${objEllipsis}_`;
 
-    await this.telegramBot.sendMessage(this.chatId, text, "MarkdownV2").catch(() => {});
+    await this._safeTelegramSend(text);
   }
 
   async _sendRoundSummary({ objective, objectiveId, evaluation, winnerTeam, loserTeam, alphaResult, betaResult, gammaResult, mergeInfo, lessons, feedback, elapsedMs }) {
@@ -770,7 +783,7 @@ Your task:
     }
 
     const text = lines.join("\n");
-    await this.telegramBot.sendMessage(this.chatId, text, "MarkdownV2").catch(() => {});
+    await this._safeTelegramSend(text);
   }
 
   getStatus() {

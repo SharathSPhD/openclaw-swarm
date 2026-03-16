@@ -7,6 +7,11 @@ const DISPATCHED_OBJECTIVES_FILE = path.join(
   "..", "data", "dispatched_objectives.json"
 );
 
+const STATE_FILE = path.join(
+  process.env.SWARM_DATA_DIR || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'data'),
+  'autonomous_state.json'
+);
+
 function loadDispatchedObjectives() {
   try {
     const data = JSON.parse(fs.readFileSync(DISPATCHED_OBJECTIVES_FILE, "utf-8"));
@@ -22,6 +27,24 @@ function saveDispatchedObjective(hashes) {
     const arr = [...hashes].slice(-500);
     fs.writeFileSync(DISPATCHED_OBJECTIVES_FILE, JSON.stringify({ hashes: arr }), "utf-8");
   } catch { /* non-critical */ }
+}
+
+function loadAutonomousState() {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      return { categoryIndex: s.categoryIndex || 0, templateIndexes: s.templateIndexes || {} };
+    }
+  } catch { /* ignore */ }
+  return { categoryIndex: 0, templateIndexes: {} };
+}
+
+function saveAutonomousState(categoryIndex, templateIndexes) {
+  try {
+    const dir = path.dirname(STATE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ categoryIndex, templateIndexes, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+  } catch { /* ignore */ }
 }
 
 function hashObjective(text) {
@@ -158,8 +181,15 @@ const CATEGORY_ORDER = [
 ];
 
 // Per-category template index for systematic cycling
-const templateIndexes = {};
-CATEGORY_ORDER.forEach(cat => { templateIndexes[cat] = 0; });
+// Load from saved state to persist across server restarts
+const savedState = loadAutonomousState();
+let categoryIndex = savedState.categoryIndex;
+const templateIndexes = savedState.templateIndexes;
+CATEGORY_ORDER.forEach(cat => { 
+  if (!(cat in templateIndexes)) {
+    templateIndexes[cat] = 0;
+  }
+});
 
 
 
@@ -325,10 +355,9 @@ export class AutonomousLoop {
     this.baseInterval = interval;
     this.currentInterval = interval;
     this.running = false;
-    this.categoryIndex = 0;
     this.objectivesDispatched = 0;
     this.maxConcurrentObjectives = 1;
-    this.dispatchedObjectiveHashes = loadDispatchedObjectives();
+    this.usedTemplateKeys = new Set(); // Track recently used template combinations
     this.projectRoot = projectRoot || process.cwd().replace(/\/swarm-platform.*/, "");
   }
 
@@ -455,15 +484,13 @@ export class AutonomousLoop {
             `Scores: α=${healthStats.alphaScore} β=${healthStats.betaScore} γ=${healthStats.gammaScore}`,
             `Completed: ${healthStats.completed} · Latency: ${Math.round(healthStats.avgLatency / 1000)}s`,
             `Critic approval: ${Math.round(healthStats.criticApprovalRate * 100)}%`,
-            `Category queue: ${META_OBJECTIVE_CATEGORIES[this.categoryIndex]?.category || "?"}`
+            `Category queue: ${META_OBJECTIVE_CATEGORIES[categoryIndex]?.category || "?"}`
           ].join("\n");
           this.telegramBot.sendMessage(this.chatId, healthMsg).catch(() => {});
         }
 
-        // Track dispatched objective hash for deduplication
-        const hash = hashObjective(objective);
-        this.dispatchedObjectiveHashes.add(hash);
-        saveDispatchedObjective(this.dispatchedObjectiveHashes);
+        // Save autonomous state after dispatching
+        saveAutonomousState(categoryIndex, templateIndexes);
 
       } catch (err) {
         const errMsg = err?.stack || err?.message || String(err);
@@ -597,10 +624,10 @@ export class AutonomousLoop {
       } catch { /* best-effort, fall through to default */ }
     }
     if (!category) {
-      category = META_OBJECTIVE_CATEGORIES[this.categoryIndex];
-      this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+      category = META_OBJECTIVE_CATEGORIES[categoryIndex];
+      categoryIndex = (categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
     } else {
-      this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+      categoryIndex = (categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
     }
     let selfObjectiveText = category.generator(stats);
 
@@ -637,14 +664,25 @@ export class AutonomousLoop {
       selfObjectiveText += `\n\nContext: This is run #${runCount}. Focus on issues NOT covered in previous rounds. Look for NEW specific problems.`;
     }
 
-    // Check for duplicate and skip if already dispatched recently
-    const selfHash = hashObjective(selfObjectiveText);
-    if (this.dispatchedObjectiveHashes.has(selfHash)) {
+    // Check if this template combination was recently used
+    const templateKey = `${category.category}:0`; // META_OBJECTIVE_CATEGORIES don't have numeric indices like OBJECTIVE_TEMPLATES
+    const isTemplateUsedRecently = this.usedTemplateKeys.has(templateKey);
+    if (isTemplateUsedRecently) {
       // Force advance to next category
-      this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
-      const nextCategory = META_OBJECTIVE_CATEGORIES[this.categoryIndex];
-      this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+      categoryIndex = (categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+      const nextCategory = META_OBJECTIVE_CATEGORIES[categoryIndex];
+      categoryIndex = (categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
       selfObjectiveText = nextCategory.generator(stats);
+      // Track this new category
+      this.usedTemplateKeys.add(`${nextCategory.category}:0`);
+    } else {
+      // Track this category as used
+      this.usedTemplateKeys.add(templateKey);
+    }
+    // Evict oldest entries if set grows too large (keep last 100)
+    if (this.usedTemplateKeys.size > 100) {
+      const firstKey = this.usedTemplateKeys.values().next().value;
+      this.usedTemplateKeys.delete(firstKey);
     }
 
     const selfObj = { objective: selfObjectiveText, objectiveId, isExternal: false, category: category.category };
@@ -744,6 +782,9 @@ export class AutonomousLoop {
     const idx = templateIndexes[category] || 0;
     const selected = templates[idx % templates.length];
     templateIndexes[category] = (idx + 1) % templates.length;
+    
+    // Persist state after updating templateIndexes
+    saveAutonomousState(categoryIndex, templateIndexes);
     
     return selected;
   }
