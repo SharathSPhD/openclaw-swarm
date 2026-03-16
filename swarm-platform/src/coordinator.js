@@ -264,11 +264,10 @@ Objective: ${objective}`;
             ? `Context from prior tasks:\n${dependencyContext}\n\nYour task: ${subTask.description}`
             : subTask.description;
           let taskPrompt = feedbackPrefix + baseTask;
-          if (this.explorationEngine) {
-            const toolContext = buildToolContext(this.explorationEngine, subTask.role);
-            if (toolContext) {
-              taskPrompt = buildToolAwarePrompt({ role: subTask.role, taskText: feedbackPrefix + baseTask, toolContext, codebaseHint: "" });
-            }
+          // Always inject tool context for agent roles
+          const toolContext = buildToolContext(this.explorationEngine, subTask.role);
+          if (toolContext) {
+            taskPrompt = buildToolAwarePrompt({ role: subTask.role, taskText: feedbackPrefix + baseTask, toolContext, codebaseHint: "" });
           }
 
           const chosen = this.chooseModelForRole({ role: subTask.role, modelTier: "standard", teamId });

@@ -65,6 +65,106 @@ export class ExplorationEngine {
     this.teamLearning = teamLearning;
     this.explorationIndex = 0;
     this.completedExplorations = new Set();
+    this.codebaseAnalysisCache = null;
+    this.codebaseAnalysisCalls = 0;
+  }
+
+  _analyzeCodebase() {
+    const platformRoot = path.join(process.cwd(), 'swarm-platform');
+    const srcDir = path.join(platformRoot, 'src');
+    const testsDir = path.join(platformRoot, 'tests');
+    
+    const analysis = {
+      todos: [],
+      largeFiles: [],
+      testGaps: []
+    };
+
+    // Scan for TODO/FIXME/HACK/XXX comments
+    const scanForComments = (dirPath) => {
+      try {
+        if (!fs.existsSync(dirPath)) return;
+        const files = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const file of files) {
+          if (file.isDirectory()) continue;
+          if (!file.name.endsWith('.js')) continue;
+          
+          const filePath = path.join(dirPath, file.name);
+          try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const lines = content.split('\n');
+            lines.forEach((line, idx) => {
+              const match = line.match(/\b(TODO|FIXME|HACK|XXX)\b\s*:?\s*(.+)/);
+              if (match) {
+                analysis.todos.push({
+                  file: path.relative(platformRoot, filePath),
+                  line: idx + 1,
+                  text: match[2].trim().slice(0, 100)
+                });
+              }
+            });
+          } catch { /* skip unreadable */ }
+        }
+      } catch { /* dir may not exist */ }
+    };
+
+    scanForComments(srcDir);
+
+    // Find large functions (>300 lines)
+    const scanForLargeFiles = (dirPath) => {
+      try {
+        if (!fs.existsSync(dirPath)) return;
+        const files = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const file of files) {
+          if (file.isDirectory()) continue;
+          if (!file.name.endsWith('.js')) continue;
+          
+          const filePath = path.join(dirPath, file.name);
+          try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const lineCount = content.split('\n').length;
+            if (lineCount > 300) { // Large file threshold
+              analysis.largeFiles.push({
+                file: path.relative(platformRoot, filePath),
+                lines: lineCount
+              });
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* dir may not exist */ }
+    };
+
+    scanForLargeFiles(srcDir);
+
+    // Check test coverage (test gaps)
+    const getTestsForFile = (srcFile) => {
+      const baseName = path.basename(srcFile, '.js');
+      const testPatterns = [
+        path.join(testsDir, 'unit', `${baseName}.test.js`),
+        path.join(testsDir, 'integration', `${baseName}.integration.test.js`),
+        path.join(testsDir, 'e2e', `${baseName}.e2e.test.js`)
+      ];
+      return testPatterns.some(p => fs.existsSync(p));
+    };
+
+    try {
+      if (fs.existsSync(srcDir)) {
+        const srcFiles = fs.readdirSync(srcDir, { withFileTypes: true });
+        for (const file of srcFiles) {
+          if (file.isDirectory() || !file.name.endsWith('.js')) continue;
+          const srcPath = path.join(srcDir, file.name);
+          const hasTest = getTestsForFile(srcPath);
+          if (!hasTest && file.name !== 'server.js') { // server.js may have integration tests
+            analysis.testGaps.push({
+              srcFile: path.relative(platformRoot, srcPath),
+              hasTest: false
+            });
+          }
+        }
+      }
+    } catch { /* ok */ }
+
+    return analysis;
   }
 
   discoverInstalledSkills() {
@@ -137,6 +237,53 @@ export class ExplorationEngine {
   }
 
   generateExplorationObjective(stats) {
+    // Periodically run code analysis (every 5th call)
+    this.codebaseAnalysisCalls += 1;
+    if (this.codebaseAnalysisCalls % 5 === 0 || !this.codebaseAnalysisCache) {
+      try {
+        this.codebaseAnalysisCache = this._analyzeCodebase();
+      } catch (err) {
+        console.warn('[explorationEngine] Codebase analysis failed:', err?.message);
+        this.codebaseAnalysisCache = null;
+      }
+    }
+
+    const analysis = this.codebaseAnalysisCache;
+    
+    // Generate objectives from code analysis if data available
+    if (analysis && (analysis.todos.length > 0 || analysis.largeFiles.length > 0 || analysis.testGaps.length > 0)) {
+      let objective = null;
+      let category = null;
+
+      if (analysis.todos.length > 0 && !this.completedExplorations.has('code_todos')) {
+        const topTodos = analysis.todos.slice(0, 5);
+        const todoList = topTodos.map(t => `  - ${t.file}:${t.line}: ${t.text}`).join('\n');
+        objective = `Fix the following TODO/FIXME items in the codebase:\n${todoList}\n\nEach fix should include or update corresponding unit tests. Reference the line numbers and understand the context before making changes.`;
+        category = 'code_todos';
+      } else if (analysis.largeFiles.length > 0 && !this.completedExplorations.has('refactoring')) {
+        const largeFile = analysis.largeFiles[0];
+        objective = `Refactor ${largeFile.file} which currently has ${largeFile.lines} lines of code. Extract helper functions, improve readability, and add clear comments. Do not change external behavior or API contracts. Maintain backward compatibility.`;
+        category = 'refactoring';
+      } else if (analysis.testGaps.length > 0 && !this.completedExplorations.has('test_coverage')) {
+        const gapFile = analysis.testGaps[0];
+        const baseName = path.basename(gapFile.srcFile, '.js');
+        objective = `Write comprehensive unit tests for ${gapFile.srcFile}. Create the file at tests/unit/${baseName}.test.js using the node:test framework. Aim for >80% line coverage of non-trivial functions. Include edge cases, error conditions, and success paths.`;
+        category = 'test_coverage';
+      }
+
+      if (objective && category) {
+        this.completedExplorations.add(category);
+        return {
+          category,
+          objective,
+          weight: 0.72, // Boost for analysis-driven objectives
+          isExternal: true,
+          fromCodeAnalysis: true
+        };
+      }
+    }
+
+    // Fallback to template-based objectives
     const eligible = EXTERNAL_OBJECTIVE_TEMPLATES.filter(t => !this.completedExplorations.has(t.category));
     if (eligible.length === 0) {
       this.completedExplorations.clear();
@@ -159,7 +306,8 @@ export class ExplorationEngine {
       category: selected.category,
       objective: selected.generator(),
       weight: selected.adjustedWeight,
-      isExternal: true
+      isExternal: true,
+      fromCodeAnalysis: false
     };
   }
 
@@ -206,8 +354,12 @@ Be specific and actionable. Reference the actual skill names and capabilities wh
     const roundNumber = stats?.completed || 0;
     const exploreBoost = Math.min(0.2, roundNumber * 0.02);
 
-    const adjustedExploreWeight = exploreWeight + exploreBoost;
-    const adjustedSelfWeight = selfWeight - exploreBoost;
+    // Boost weight if exploration objective was generated from code analysis
+    let adjustedExploreWeight = exploreWeight + exploreBoost;
+    if (explorationObj.fromCodeAnalysis) {
+      adjustedExploreWeight += 0.15;
+    }
+    const adjustedSelfWeight = selfWeight - (adjustedExploreWeight - (exploreWeight + exploreBoost));
 
     // High-priority exploration overrides weights
     if (explorationObj.weight > 0.9) {
@@ -216,7 +368,7 @@ Be specific and actionable. Reference the actual skill names and capabilities wh
 
     // Use weighted random selection based on computed weights
     if (Math.random() < adjustedExploreWeight) {
-      return { selected: explorationObj, reason: `Exploration selected. Weight: ${adjustedExploreWeight.toFixed(2)}` };
+      return { selected: explorationObj, reason: `Exploration selected. Weight: ${adjustedExploreWeight.toFixed(2)}${explorationObj.fromCodeAnalysis ? ' (code-analysis boosted)' : ''}` };
     }
 
     return { selected: selfImprovementObj, reason: `Self-improvement priority. Weight: ${adjustedSelfWeight.toFixed(2)}` };

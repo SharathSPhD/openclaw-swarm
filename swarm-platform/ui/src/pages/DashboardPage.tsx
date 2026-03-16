@@ -1,6 +1,9 @@
 import { useState } from "react";
+import * as React from "react";
 import { postApi, useApi } from "../hooks/useApi";
 import MetricsPanel from "../components/MetricsPanel";
+import ModelLatencyChart from "../components/ModelLatencyChart";
+import ObjectivePipeline from "../components/ObjectivePipeline";
 import type { SnapshotResponse, WsMessage, AgentInfo, SwarmEvent } from "../types";
 
 interface DashboardPageProps {
@@ -12,23 +15,29 @@ function SystemStatusBar({ snapshot }: { snapshot: SnapshotResponse | null }) {
   const gpu = snapshot?.system?.gpu;
   if (!gpu) {
     return (
-      <div className="panel flex items-center gap-4">
-        <span className="text-swarm-muted">GPU: N/A</span>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="panel flex items-center gap-4">
+          <span className="text-swarm-muted">GPU: N/A</span>
+        </div>
+        <ModelLatencyChart snapshot={snapshot} />
       </div>
     );
   }
   return (
-    <div className="panel flex flex-wrap items-center gap-4">
-      <span className="text-sm font-medium">GPU</span>
-      <span className="text-swarm-muted">
-        {gpu.usedMb ?? 0} / {gpu.totalMb ?? 0} MB ({gpu.usedPct ?? 0}%)
-      </span>
-      <span className="text-swarm-muted">Util: {gpu.utilPct ?? 0}%</span>
-      {gpu.devices?.map((d) => (
-        <span key={d.index} className="chip chip-normal">
-          GPU {d.index}: {(d.usedMb ?? 0)}MB
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="panel flex flex-wrap items-center gap-4">
+        <span className="text-sm font-medium">GPU</span>
+        <span className="text-swarm-muted">
+          {gpu.usedMb ?? 0} / {gpu.totalMb ?? 0} MB ({gpu.usedPct ?? 0}%)
         </span>
-      ))}
+        <span className="text-swarm-muted">Util: {gpu.utilPct ?? 0}%</span>
+        {gpu.devices?.map((d) => (
+          <span key={d.index} className="chip chip-normal">
+            GPU {d.index}: {(d.usedMb ?? 0)}MB
+          </span>
+        ))}
+      </div>
+      <ModelLatencyChart snapshot={snapshot} />
     </div>
   );
 }
@@ -365,6 +374,82 @@ function LearningPanel() {
   );
 }
 
+function AgentReasoningLog({ lastMessage }: { lastMessage: WsMessage | null }) {
+  const [logs, setLogs] = useState<Array<{
+    id: string;
+    ts: string;
+    teamId: string;
+    role: string;
+    model: string;
+    output: string;
+    ok: boolean;
+  }>>([]);
+
+  React.useEffect(() => {
+    if (!lastMessage) return;
+    if (lastMessage.type !== "task.completed" && lastMessage.type !== "task.failed") return;
+
+    const p = lastMessage.payload as Record<string, unknown>;
+    const ok = lastMessage.type === "task.completed";
+    const teamId = String(p.teamId ?? "?");
+    const role = String(p.role ?? "?");
+    const model = String(p.model ?? "?");
+    const output = String(p.output ?? "");
+
+    const newEntry = {
+      id: String(p.id ?? Date.now()),
+      ts: new Date().toLocaleTimeString(),
+      teamId,
+      role,
+      model,
+      output: output.slice(0, 400),
+      ok
+    };
+
+    setLogs((prev) => [newEntry, ...prev].slice(0, 50));
+  }, [lastMessage]);
+
+  const handleClear = () => setLogs([]);
+
+  if (logs.length === 0) {
+    return (
+      <div className="panel">
+        <h3 className="text-sm font-semibold mb-2">Live Agent Reasoning</h3>
+        <p className="text-swarm-muted text-xs">Waiting for agent output...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold">Live Agent Reasoning</h3>
+        <button
+          onClick={handleClear}
+          className="px-2 py-1 text-xs rounded bg-swarm-border hover:bg-swarm-border/80 text-swarm-muted"
+        >
+          Clear
+        </button>
+      </div>
+      <div
+        className="max-h-96 overflow-y-auto text-xs font-mono"
+        style={{ backgroundColor: "#0d0d0d" }}
+      >
+        {logs.map((log) => (
+          <div key={log.id} className="border-b border-swarm-border/30 p-2">
+            <div style={{ color: log.ok ? "#10b981" : "#ef4444" }} className="font-medium">
+              [{log.ts}] {log.teamId} / {log.role} ({log.model}) {log.ok ? "OK" : "FAIL"}
+            </div>
+            <div style={{ color: "#888" }} className="mt-1 whitespace-pre-wrap break-words">
+              {log.output}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RecentAgentActivity({ events }: { events: SwarmEvent[] }) {
   const taskEvents = (events || [])
     .filter((e) => e.type === "task.completed" || e.type === "task.failed")
@@ -515,6 +600,7 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
+      <ObjectivePipeline />
       <SystemStatusBar snapshot={snapshot} />
       <MetricsPanel />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -526,6 +612,7 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
         <TeamTopology agents={agents} competitiveStatus={competitiveStatus} />
       </div>
       <ActiveAgentsTable agents={agents} />
+      <AgentReasoningLog lastMessage={lastMessage} />
       <RecentAgentActivity events={events} />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <EventStream events={events} />

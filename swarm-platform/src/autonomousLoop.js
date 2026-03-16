@@ -1,26 +1,54 @@
 const META_OBJECTIVE_CATEGORIES = [
   {
+    category: "code_improvement",
+    generator: (stats) => {
+      return `Identify the single highest-impact code change in /home/sharaths/projects/openclaw_build/swarm-platform/src/ that would improve reliability or performance. Look for: error handling gaps in the event pipeline, race conditions in concurrent task execution, memory leaks in the event log, inefficient loops or synchronous operations that block the event loop. Analyze the code, identify the worst bottleneck, implement the fix, and write a comprehensive test case for it using node:test. Provide before/after performance metrics if applicable.`;
+    }
+  },
+  {
+    category: "test_coverage",
+    generator: (stats) => {
+      return `Find the 3 largest gaps in test coverage in /home/sharaths/projects/openclaw_build/swarm-platform/tests/. Focus on untested error paths and edge cases. For each gap: understand what's not covered, write specific tests using node:test framework. Target: swarm-platform/tests/unit/ for unit tests. Include tests for: coordinator failure recovery, timeout handling in competitive evaluation, store append-only semantics with concurrent writes.`;
+    }
+  },
+  {
     category: "performance",
     generator: (stats) => {
       if (stats.avgLatency > 60000) {
-        return `Task latency is critically high at ${Math.round(stats.avgLatency / 1000)}s average. Investigate: which Ollama models are slowest to respond on this DGX Spark hardware, whether model loading/unloading is causing spikes, and whether role-model assignments are suboptimal. Recommend specific model swaps (e.g., replace qwen2.5:7b with phi3:mini for research tasks). Include expected latency improvement for each change.`;
+        return `Task latency is critically high at ${Math.round(stats.avgLatency / 1000)}s average. Optimize model routing by using vLLM endpoint at http://127.0.0.1:8000/v1 if available. Check: which models respond fastest on DGX Spark, whether role-model assignments are suboptimal. Recommend specific model swaps. Include latency benchmarks before/after changes.`;
       }
       if (stats.avgLatency > 30000) {
-        return `Average task latency is ${Math.round(stats.avgLatency / 1000)}s. Identify the top 3 latency contributors. For each: is it model load time, inference time, or orchestration overhead? Propose targeted optimizations. Consider model pre-warming strategies for frequently used roles.`;
+        return `Average task latency is ${Math.round(stats.avgLatency / 1000)}s. Optimize model routing: use vLLM endpoint if available (http://127.0.0.1:8000/v1). Profile the coordinator task dispatch to find delays. Propose and implement one optimization: request batching, result caching, or parallel model invocation.`;
       }
-      return `Latency is healthy at ${Math.round(stats.avgLatency / 1000)}s. Now focus on throughput: how can we safely increase concurrent objective dispatch? Analyze the queue depth patterns, GPU memory headroom, and suggest a safe maxConcurrentObjectives value above the current 1.`;
+      return `Latency is healthy at ${Math.round(stats.avgLatency / 1000)}s. Enable vLLM endpoint if not running (http://127.0.0.1:8000/v1) and benchmark throughput improvements. Propose a strategy to increase maxConcurrentObjectives safely based on GPU memory and queue patterns.`;
     }
+  },
+  {
+    category: "architecture",
+    generator: (stats) => {
+      return `Analyze the coordinator.js → openclawRunner.js pipeline. Identify bottlenecks in task decomposition, model spawning latency, and result streaming. Propose and implement ONE specific optimization: either (1) batch request pooling to amortize model startup, (2) result caching for repeated objectives, or (3) parallel subtask dispatch instead of sequential. Provide code changes and latency benchmarks.`;
+    }
+  },
+  {
+    category: "security",
+    generator: (stats) => {
+      return `Run a security audit on the HTTP API endpoints in server.js and routes/. Check for: missing input validation (e.g., dispatch body bounds), auth bypass paths (ADMIN_API_KEY checks), rate limiting gaps (objective creation spam), SQL injection in database queries, command injection in OpenClaw spawning. Fix the highest-severity finding and write a test case to prevent regression.`;
+    }
+  },
+  {
+    category: "documentation",
+    generator: (stats) => `Generate/update CLAUDE.md with current architecture. Write comprehensive documentation to /home/sharaths/projects/openclaw_build/swarm-platform/docs/architecture.md covering: competitive 3-team flow (Alpha vs Beta, Gamma implements), event log design (append-only idempotency), coordinator decomposition algorithm, model routing logic, tile scoring. Include sequence diagrams for objective dispatch → completion.`
   },
   {
     category: "quality",
     generator: (stats) => {
       if (stats.criticApprovalRate < 0.6) {
-        return `Critic rejection rate is very high (only ${Math.round(stats.criticApprovalRate * 100)}% approval). This wastes GPU cycles on rewrites. Deep-dive on what the critic is consistently rejecting: is it incomplete answers, wrong format, hallucinations, or missing code examples? Write a concrete prompt template for the BUILD role that pre-empts the 3 most common rejection reasons.`;
+        return `Critic rejection rate is very high (only ${Math.round(stats.criticApprovalRate * 100)}% approval). This wastes GPU cycles on rewrites. Analyze failure patterns: is it format errors, incomplete answers, or hallucinations? Design and implement a structured output format that addresses the 3 most common rejection reasons.`;
       }
       if (stats.criticApprovalRate < 0.8) {
-        return `Critic approval rate is ${Math.round(stats.criticApprovalRate * 100)}%. The gap between RESEARCH and BUILD agent output quality is likely the cause. Design a structured output format for BUILD agents that includes: summary, implementation code, verification steps, and known limitations. This reduces revision cycles.`;
+        return `Critic approval rate is ${Math.round(stats.criticApprovalRate * 100)}%. Design a structured output format for all agent roles that includes: summary, detailed explanation, implementation (if applicable), validation steps, and edge cases. Implement this in the prompt templates and measure approval rate improvement.`;
       }
-      return `Quality metrics look good (${Math.round(stats.criticApprovalRate * 100)}% critic approval). Now focus on output depth: design a self-critique checklist that BUILD and INTEGRATOR agents should run through before submitting. Include: completeness, correctness, edge cases covered, and actionability of the output.`;
+      return `Quality metrics look good (${Math.round(stats.criticApprovalRate * 100)}% critic approval). Design a self-critique checklist that agents should follow: completeness of answer, correctness against objective, edge cases covered, actionability of output. Implement as a prompt injection and measure adoption.`;
     }
   },
   {
@@ -28,22 +56,10 @@ const META_OBJECTIVE_CATEGORIES = [
     generator: (stats) => {
       const completionRate = stats.completed / Math.max(stats.completed + (stats.failed || 0), 1);
       if (completionRate < 0.7) {
-        return `Task failure rate is high (${Math.round((1 - completionRate) * 100)}% fail rate). Categorize failure modes: timeout, model refusal, JSON parse error, tool failure, or logical errors. For each category, design a specific recovery strategy. Focus on the most common failure type first.`;
+        return `Task failure rate is high (${Math.round((1 - completionRate) * 100)}% fail rate). Categorize failure modes: timeout, model refusal, JSON parse error, tool failure. For each, design a specific recovery strategy. Focus on the most common type first and implement recovery logic.`;
       }
-      return "Design a capability expansion roadmap for the swarm. Identify 3 domains where the swarm is currently weakest based on objective history. For each domain, specify: what skills are needed, which model handles it best, and what new objective templates would exercise those skills. Make recommendations actionable within 1 week.";
+      return "Design a capability expansion roadmap. Identify 3 domains where the swarm is weakest. For each: specify needed skills, best model, new objective templates. Make recommendations actionable within 1 week.";
     }
-  },
-  {
-    category: "documentation",
-    generator: (stats) => `Write a living architecture document for the OpenClaw Swarm Platform based on what you observe. Include: current competitive team structure (Alpha vs Beta, Gamma implements winner), the complete event flow from dispatch to score update, and the adaptive scheduling algorithm. Score snapshot: Alpha=${stats.alphaScore}, Beta=${stats.betaScore}, Gamma=${stats.gammaScore}. Identify 2 architectural risks and propose mitigations.`
-  },
-  {
-    category: "system_health",
-    generator: () => "Perform a comprehensive health assessment of the DGX Spark-hosted swarm. Investigate: (1) current GPU utilization vs available VRAM, (2) which Ollama models are loaded vs cold, (3) any recent OOM events in system logs, (4) whether the 13 available models are optimally distributed across roles. Produce a VRAM budget table showing each loaded model's footprint."
-  },
-  {
-    category: "testing",
-    generator: () => "Design and write 5 specific integration test scenarios for the competitive coordinator pipeline. Each test should: specify input objective text, expected coordinator decomposition, expected per-role outputs, and scoring assertions. Focus on edge cases: empty objectives, single-role tasks, coordinator decomposition with 5+ subtasks, and tasks requiring tool use. Provide executable test code in Node.js using node:test."
   },
   {
     category: "strategy",
@@ -52,23 +68,22 @@ const META_OBJECTIVE_CATEGORIES = [
       const lagScore = Math.min(stats.alphaScore, stats.betaScore);
       const gap = leadScore - lagScore;
       if (gap > 5000) {
-        return `One team has a ${gap}-point lead. Analyze: what is the leading team doing differently? Are there systematic prompt differences, model advantages, or task type biases? Design 3 specific interventions that could help the lagging team close the gap without simply copying the leader. Diversity of approach is valuable.`;
+        return `One team has a ${gap}-point lead. Analyze: what is the leading team doing differently? Are there systematic prompt differences, model advantages, or task type biases? Design 3 specific interventions to help the lagging team close the gap. Diversity of approach is valuable.`;
       }
-      return `Teams are closely matched (gap: ${gap} pts). To break the tie, design a high-stakes "breakthrough objective" — a complex, multi-step task that requires creative synthesis across all 4 agent roles. The team with better orchestration and model utilization should win. Provide the objective text and scoring rubric.`;
+      return `Teams are closely matched (gap: ${gap} pts). Design a high-stakes breakthrough objective requiring creative synthesis across all 4 agent roles. Team with better orchestration should win. Provide objective text and scoring rubric.`;
     }
   },
   {
     category: "knowledge_synthesis",
-    generator: (stats) => `The swarm has completed ${stats.completed} objectives. Extract the most valuable insights from this body of work. What patterns have emerged? What does the swarm know about its own capabilities? Write a "lessons learned" memo covering: (1) most effective prompt patterns discovered, (2) model-role combinations that produced best results, (3) objective types that consistently fail and why, (4) 3 concrete improvements to implement this week.`
-  },
-  {
-    category: "innovation",
-    generator: () => "Propose a novel enhancement to the OpenClaw Swarm Platform that doesn't currently exist. Consider: multi-round debate between Alpha and Beta before Gamma implements, cross-objective context sharing (results from one objective inform the next), agent specialization evolution (roles that adapt based on performance history), or meta-learning where the program lead writes new objective templates based on team feedback. Design the most impactful enhancement with full implementation details."
+    generator: (stats) => {
+      const capped = Math.min(10, stats.completed);
+      return `The swarm has completed ${capped} key objectives. Extract valuable insights: (1) most effective prompt patterns, (2) best model-role combinations, (3) failure modes and recovery strategies, (4) 3 concrete improvements to implement this week. Cap analysis to top 10 objectives for focus.`;
+    }
   }
 ];
 
 export class AutonomousLoop {
-  constructor({ competitiveCoordinator, coordinator, telegramBot, telegramRelay, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController }) {
+  constructor({ competitiveCoordinator, coordinator, telegramBot, telegramRelay, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController, objectivePerformanceTracker }) {
     this.competitiveCoordinator = competitiveCoordinator;
     this.coordinator = coordinator;
     this.telegramBot = telegramBot;
@@ -82,6 +97,7 @@ export class AutonomousLoop {
     this.teamLearning = teamLearning;
     this.explorationEngine = explorationEngine;
     this.admissionController = admissionController || null;
+    this.objectivePerformanceTracker = objectivePerformanceTracker || null;
     this.baseInterval = interval;
     this.currentInterval = interval;
     this.running = false;
@@ -136,7 +152,7 @@ export class AutonomousLoop {
         }
 
         const stats = this._gatherStats();
-        const selected = this._selectNextObjective(stats);
+        const selected = await this._selectNextObjective(stats);
         objectiveId = selected.objectiveId;
         const { objective, isExternal, category } = selected;
 
@@ -239,7 +255,7 @@ export class AutonomousLoop {
     return this.baseInterval; // default (90s or configured)
   }
 
-  _selectNextObjective(stats) {
+  async _selectNextObjective(stats) {
     const objectiveId = `auto-${Date.now()}`;
 
     // Calculate lesson-based weights
@@ -278,10 +294,34 @@ export class AutonomousLoop {
         : this.explorationEngine.generateExplorationObjective(stats);
       const exploreObj = { objective: explorationData.objective, objectiveId, isExternal: true, category: explorationData.category };
 
-      const weighted = this.explorationEngine.weighObjectives(selfObj, exploreObj, { ...stats, selfWeight, exploreWeight });
+      // Boost weights based on ROI data if objectivePerformanceTracker is available
+      let adjustedSelfWeight = selfWeight;
+      let adjustedExploreWeight = exploreWeight;
+      if (this.objectivePerformanceTracker) {
+        try {
+          const topROI = await this.objectivePerformanceTracker.getTopROICategories(1);
+          if (topROI.length > 0) {
+            const topCategory = topROI[0].category;
+            const topRoi = topROI[0].avgRoi;
+            
+            // Boost the weight of whichever objective type matches the top-ROI category
+            if (selfObj.category === topCategory) {
+              adjustedSelfWeight = Math.min(selfWeight * 1.5, 0.9);
+              adjustedExploreWeight = 1 - adjustedSelfWeight;
+              console.log(`[autonomousLoop] ROI boost: category=${topCategory} roi=${topRoi.toFixed(2)} selfWeight=${adjustedSelfWeight.toFixed(2)}`);
+            } else if (exploreObj.category === topCategory) {
+              adjustedExploreWeight = Math.min(exploreWeight * 1.5, 0.9);
+              adjustedSelfWeight = 1 - adjustedExploreWeight;
+              console.log(`[autonomousLoop] ROI boost: category=${topCategory} roi=${topRoi.toFixed(2)} exploreWeight=${adjustedExploreWeight.toFixed(2)}`);
+            }
+          }
+        } catch { /* best-effort ROI boost */ }
+      }
+
+      const weighted = this.explorationEngine.weighObjectives(selfObj, exploreObj, { ...stats, selfWeight: adjustedSelfWeight, exploreWeight: adjustedExploreWeight });
 
       // Use global lesson tie-breaker: if weights are close (within 0.1), defer to lesson-suggested category
-      if (this.teamLearning && Math.abs(selfWeight - exploreWeight) < 0.1) {
+      if (this.teamLearning && Math.abs(adjustedSelfWeight - adjustedExploreWeight) < 0.1) {
         this.teamLearning.getSuggestedObjective(stats).then(suggestedCategory => {
           if (suggestedCategory) {
             console.log(`[autonomousLoop] Cross-team lesson tie-breaker suggests category: ${suggestedCategory}`);

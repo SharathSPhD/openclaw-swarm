@@ -348,6 +348,41 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, loadState, ts: new Date().toISOString() });
 });
 
+// vLLM / backend status - checks if fast inference backend is available
+let vllmStatusCache = { available: false, checkedAt: 0, model: null };
+async function checkVllmHealth() {
+  const vllmUrl = process.env.VLLM_BASE_URL || "http://127.0.0.1:8000/v1";
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const res = await fetch(`${vllmUrl}/models`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      const models = data?.data?.map(m => m.id) || [];
+      vllmStatusCache = { available: true, checkedAt: Date.now(), url: vllmUrl, models };
+    } else {
+      vllmStatusCache = { available: false, checkedAt: Date.now(), url: vllmUrl, error: `HTTP ${res.status}` };
+    }
+  } catch (err) {
+    vllmStatusCache = { available: false, checkedAt: Date.now(), url: vllmUrl, error: err?.message };
+  }
+  return vllmStatusCache;
+}
+setInterval(() => checkVllmHealth().catch(() => {}), 30000);
+checkVllmHealth().catch(() => {});
+
+app.get("/api/backend-status", async (_req, res) => {
+  const fresh = Date.now() - vllmStatusCache.checkedAt < 35000;
+  const status = fresh ? vllmStatusCache : await checkVllmHealth();
+  res.json({
+    ollama: { available: modelInventory.available, models: modelInventory.models?.length || 0 },
+    vllm: status,
+    activeBackend: status.available ? "vllm+ollama" : "ollama",
+    runnerTimeoutMs: cfg.runnerTimeoutMs
+  });
+});
+
 app.get("/api/snapshot", (_req, res) => {
   res.json(snapshot());
 });

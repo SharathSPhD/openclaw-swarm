@@ -217,17 +217,81 @@ export class CompetitiveCoordinator {
               payload: { objectiveId, reason: "server_code_changed" }
             }));
 
-            console.log("[competitive] Self-update detected, scheduling PM2 reload");
+            console.log("[competitive] Self-update detected, scheduling graceful restart");
             try {
               const { execFileSync } = await import("node:child_process");
+              const fs = await import("node:fs");
+              const path = await import("node:path");
+              
               setTimeout(() => {
-                try {
-                  execFileSync("pm2", ["reload", "swarm-platform"], { timeout: 10000 });
-                } catch (reloadErr) {
-                  console.warn("[competitive] PM2 reload failed:", reloadErr?.message);
+                // Check if ecosystem.config.cjs exists
+                const platformRoot = process.cwd();
+                const ecosystemPath = path.join(platformRoot, "ecosystem.config.cjs");
+                let hasEcosystem = fs.existsSync(ecosystemPath);
+                
+                let restarted = false;
+                
+                // If no ecosystem file, create one before attempting PM2 reload
+                if (!hasEcosystem) {
+                  try {
+                    const ecosystemConfig = `module.exports = {
+  apps: [{
+    name: 'swarm-platform',
+    script: './src/server.js',
+    cwd: '${platformRoot}',
+    env_file: '.env',
+    watch: false,
+    instances: 1,
+    exec_mode: 'fork',
+    restart_delay: 2000,
+    max_restarts: 10
+  }]
+};`;
+                    fs.writeFileSync(ecosystemPath, ecosystemConfig, 'utf-8');
+                    console.log("[competitive] Created ecosystem.config.cjs");
+                    hasEcosystem = true;
+                  } catch (err) {
+                    console.warn("[competitive] Failed to create ecosystem.config.cjs:", err?.message);
+                  }
+                }
+                
+                // Try PM2 first (production)
+                if (hasEcosystem) {
+                  try {
+                    // First check if PM2 is already managing this process
+                    try {
+                      execFileSync("pm2", ["list"], { timeout: 5000 });
+                      // PM2 is available, try reload
+                      execFileSync("pm2", ["reload", "swarm-platform"], { timeout: 10000 });
+                      restarted = true;
+                      console.log("[competitive] PM2 reload triggered successfully");
+                    } catch (checkErr) {
+                      // PM2 not managing the process yet, try start
+                      try {
+                        execFileSync("pm2", ["start", "ecosystem.config.cjs", "--no-daemon"], { timeout: 10000 });
+                        restarted = true;
+                        console.log("[competitive] PM2 started with ecosystem.config.cjs");
+                      } catch {
+                        console.warn("[competitive] PM2 start failed");
+                      }
+                    }
+                  } catch (err) {
+                    console.warn("[competitive] PM2 operation failed:", err?.message);
+                  }
+                }
+
+                if (!restarted) {
+                  // Fallback: Emit SIGUSR2 (nodemon restart) or SIGTERM (graceful shutdown → supervisor restarts)
+                  const pid = process.pid;
+                  console.log(`[competitive] PM2 unavailable, sending restart signal to pid ${pid}`);
+                  try {
+                    process.kill(pid, "SIGUSR2"); // nodemon reload
+                  } catch {
+                    try { process.kill(pid, "SIGTERM"); } catch { /* best effort */ }
+                  }
                 }
               }, 3000);
-            } catch { /* pm2 not available */ }
+            } catch { /* best effort restart */ }
           }
         } catch (err) {
           console.warn("[competitive] Merge failed:", err?.message);
@@ -441,15 +505,51 @@ export class CompetitiveCoordinator {
         }
 
         console.warn("[competitive] Evaluation parse failed for", objectiveId, "- raw:", stdout.slice(0, 200));
-        // Structured fallback: base decision on completion status, not arbitrary choice
+        // Structured fallback: base decision on completion status and output length
         const alphaCompleted = alphaResult.status === "completed";
         const betaCompleted = betaResult.status === "completed";
         if (alphaCompleted && !betaCompleted) {
           resolve({ winner: "team-alpha", reasoning: "Beta failed; alpha completed.", alphaScore: 5, betaScore: 0 });
         } else if (betaCompleted && !alphaCompleted) {
           resolve({ winner: "team-beta", reasoning: "Alpha failed; beta completed.", alphaScore: 0, betaScore: 5 });
+        } else if (alphaCompleted && betaCompleted) {
+          // Both completed; use output length as tiebreaker
+          const alphaLen = (alphaResult.finalOutput || "").length;
+          const betaLen = (betaResult.finalOutput || "").length;
+          const lengthDiff = Math.abs(alphaLen - betaLen);
+          const tenPercentAlpha = alphaLen * 0.1;
+          
+          if (lengthDiff > tenPercentAlpha) {
+            // Significant difference: winner is team with more output
+            const winner = alphaLen > betaLen ? "team-alpha" : "team-beta";
+            const longer = Math.max(alphaLen, betaLen);
+            const shorter = Math.min(alphaLen, betaLen);
+            const pct = Math.round((longer / shorter - 1) * 100);
+            resolve({
+              winner,
+              reasoning: `Both completed; ${winner} has ${pct}% more output (length-based tiebreaker).`,
+              alphaScore: alphaLen > betaLen ? 5 : 3,
+              betaScore: betaLen > alphaLen ? 5 : 3
+            });
+          } else {
+            // Within 10% length: use objectiveId hash for consistent tie-breaking
+            const hash = objectiveId.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+            const winner = hash % 2 === 0 ? "team-alpha" : "team-beta";
+            resolve({
+              winner,
+              reasoning: `Both completed with similar output length (${alphaLen} vs ${betaLen} chars); hash-based selection (parse failure).`,
+              alphaScore: 4,
+              betaScore: 4
+            });
+          }
         } else {
-          resolve({ winner: "team-alpha", reasoning: "Both completed; defaulting to alpha (parse failure).", alphaScore: 5, betaScore: 5 });
+          // Both failed
+          resolve({
+            winner: "tie_timeout",
+            reasoning: "Both teams failed; no winner.",
+            alphaScore: 0,
+            betaScore: 0
+          });
         }
       });
     });

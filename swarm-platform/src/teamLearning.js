@@ -15,6 +15,8 @@ export class TeamLearning {
     // In-memory stores for file-based mode (max 500 and 200 entries respectively)
     this.performanceRecords = [];
     this.lessonRecords = [];
+    // Category outcome tracking for objective ROI analysis
+    this.categoryStats = new Map();
   }
 
   async init() {
@@ -91,6 +93,47 @@ export class TeamLearning {
     } catch (err) {
       console.warn("[teamLearning] recordTaskOutcome (DB):", err?.message);
     }
+  }
+
+  recordCategoryOutcome(category, { scoreGained, tasksCompleted, tasksFailed, durationMs }) {
+    if (!category) return; // Skip if no category provided
+    
+    const key = String(category);
+    const existing = this.categoryStats.get(key) || {
+      attempts: 0,
+      totalScore: 0,
+      totalDuration: 0,
+      failures: 0
+    };
+
+    existing.attempts += 1;
+    existing.totalScore += scoreGained || 0;
+    existing.totalDuration += durationMs || 0;
+    existing.failures += tasksFailed || 0;
+
+    this.categoryStats.set(key, existing);
+  }
+
+  getTopCategories(limit = 3) {
+    const categories = [];
+    
+    for (const [category, stats] of this.categoryStats.entries()) {
+      if (stats.attempts === 0) continue;
+      
+      const avgScore = stats.totalScore / stats.attempts;
+      const successRate = stats.attempts > 0 ? ((stats.attempts - stats.failures) / stats.attempts) : 0;
+      
+      categories.push({
+        category,
+        avgScore: Number(avgScore.toFixed(2)),
+        attempts: stats.attempts,
+        successRate: Number((successRate * 100).toFixed(1))
+      });
+    }
+
+    // Sort by average score gained (descending)
+    categories.sort((a, b) => b.avgScore - a.avgScore);
+    return categories.slice(0, limit);
   }
 
   async recordLesson({ teamId, roundId, category, lesson, model, role, severity }) {
@@ -268,6 +311,20 @@ export class TeamLearning {
       lessons.push({ teamId: "program-lead", category: "evaluation", lesson, severity: "info" });
       await this.recordLesson({ teamId: "program-lead", roundId: objectiveId, category: "evaluation", lesson, severity: "info" });
     }
+
+    // Record category outcome for ROI tracking
+    const category = roundResult?.category || "unknown";
+    const totalScore = (alphaResult?.score || 0) + (betaResult?.score || 0);
+    const tasksCompleted = (alphaResult?.tasksCompleted || 0) + (betaResult?.tasksCompleted || 0);
+    const tasksFailed = (alphaResult?.tasksFailed || 0) + (betaResult?.tasksFailed || 0);
+    const totalDuration = Math.max((alphaResult?.durationMs || 0), (betaResult?.durationMs || 0));
+    
+    this.recordCategoryOutcome(category, {
+      scoreGained: totalScore,
+      tasksCompleted,
+      tasksFailed,
+      durationMs: totalDuration
+    });
 
     this.roundHistory.push({ roundId: objectiveId, lessons, ts: new Date().toISOString() });
     return lessons;

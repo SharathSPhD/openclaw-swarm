@@ -37,6 +37,11 @@
       "qwen2.5-coder:7b",
       "deepseek-coder:6.7b",
       "deepseek-r1:8b"
+    ],
+    "vllm_fast": [
+      "Qwen/Qwen2.5-14B-Instruct",
+      "Qwen/Qwen2.5-7B-Instruct",
+      "Qwen/Qwen2.5-Coder-7B-Instruct"
     ]
   },
   "modelCapabilities": {
@@ -51,7 +56,21 @@
     "nemotron-mini:4b": { "toolCalling": true, "reasoning": false, "notes": "Fast, lightweight" },
     "phi3:mini": { "toolCalling": true, "reasoning": false, "notes": "Smallest, fastest" },
     "qwen2.5:3b": { "toolCalling": true, "reasoning": false },
-    "llama3.2:3b": { "toolCalling": true, "reasoning": false }
+    "llama3.2:3b": { "toolCalling": true, "reasoning": false },
+    "Qwen/Qwen2.5-14B-Instruct": { "toolCalling": true, "reasoning": true, "notes": "vLLM fast backend - ~70 tok/s on DGX Spark", "provider": "dgx-llm" },
+    "Qwen/Qwen2.5-7B-Instruct": { "toolCalling": true, "reasoning": false, "notes": "vLLM fast backend", "provider": "dgx-llm" },
+    "Qwen/Qwen2.5-Coder-7B-Instruct": { "toolCalling": true, "reasoning": false, "notes": "vLLM fast code backend", "provider": "dgx-llm" }
+  },
+  "providers": {
+    "dgx-llm": {
+      "endpoint": "http://127.0.0.1:8000/v1",
+      "healthCheck": "http://127.0.0.1:8000/health",
+      "notes": "vLLM OpenAI-compatible server on DGX Spark GB10. Start with: scripts/start-vllm.sh"
+    },
+    "ollama": {
+      "endpoint": "http://127.0.0.1:11434",
+      "notes": "Ollama local inference - fallback backend"
+    }
   },
   "roleRoutes": {
     "research": {
@@ -62,6 +81,7 @@
     "build": {
       "tier": "standard",
       "primary": "qwen2.5-coder:7b",
+      "vllmPrimary": "Qwen/Qwen2.5-Coder-7B-Instruct",
       "fallback": ["deepseek-coder:6.7b", "qwen2.5:7b", "gemma2:9b"]
     },
     "critic": {
@@ -72,21 +92,25 @@
     "integrator": {
       "tier": "quality",
       "primary": "qwen2.5:14b",
+      "vllmPrimary": "Qwen/Qwen2.5-14B-Instruct",
       "fallback": ["gemma2:9b", "mistral:7b"]
     },
     "coordinator": {
       "tier": "quality",
       "primary": "qwen2.5:14b",
+      "vllmPrimary": "Qwen/Qwen2.5-14B-Instruct",
       "fallback": ["gemma2:9b", "qwen2.5:7b"]
     },
     "program-lead": {
       "tier": "quality",
       "primary": "qwen2.5:14b",
+      "vllmPrimary": "Qwen/Qwen2.5-14B-Instruct",
       "fallback": ["nemotron-mini:4b", "gemma2:9b"]
     },
     "evaluator": {
       "tier": "quality",
       "primary": "qwen2.5:14b",
+      "vllmPrimary": "Qwen/Qwen2.5-14B-Instruct",
       "fallback": ["gemma2:9b", "qwen2.5:7b"]
     }
   }

@@ -105,4 +105,22 @@ export class ObjectivePerformanceTracker {
 
     return roiResults[0]?.category || "coverage";
   }
+
+  async getTopROICategories(limit = 3) {
+    // Get performance data for all known categories
+    const categories = ["performance", "quality", "coverage", "documentation", "code_improvement", "test_coverage", "architecture", "security", "strategy", "knowledge_synthesis"];
+
+    const roiResults = await Promise.all(
+      categories.map(async (cat) => {
+        const { avgRoi, count } = await this.getObjectiveROI(cat);
+        return { category: cat, avgRoi, count };
+      })
+    );
+
+    // Sort by ROI descending, filter out untested categories, return top N
+    return roiResults
+      .filter(r => r.count > 0) // Only tested categories
+      .sort((a, b) => b.avgRoi - a.avgRoi)
+      .slice(0, limit);
+  }
 }

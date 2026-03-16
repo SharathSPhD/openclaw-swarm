@@ -1,3 +1,23 @@
+/**
+ * Competitive Coordinator Integration Tests
+ *
+ * Tests the competitive coordination pipeline that orchestrates:
+ * 1. Fork phase: dispatch objective to two teams (alpha & beta) in parallel
+ * 2. Evaluate phase: have the program lead assess both teams' outputs
+ * 3. Implement phase: have team gamma implement the winning approach
+ * 4. Merge phase: integrate the implementation into main
+ * 5. Learning phase: generate lessons from the round for adaptive routing
+ *
+ * These tests focus on:
+ * - CompetitiveCoordinator initialization and lifecycle management
+ * - Mock-mode execution with predetermined coordinator results
+ * - StructuredEvaluator prompt building and response parsing
+ * - TeamLearning round analysis and history tracking
+ * - Store event contract and objective board tracking
+ *
+ * Run with: node --test tests/integration/competitive.integration.test.js
+ */
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CompetitiveCoordinator } from "../../src/competitiveCoordinator.js";
