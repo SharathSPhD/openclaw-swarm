@@ -20,12 +20,20 @@ interface ThroughputMetrics {
   queueDepth: number;
 }
 
+interface VllmInfo {
+  available: boolean;
+  models: string[];
+  url: string;
+  error: string | null;
+}
+
 interface MetricsSummary {
   gpu: GpuMetrics | null;
   runningModels: string[];
   ollamaOk: boolean;
   latency: LatencyMetrics;
   throughput: ThroughputMetrics;
+  vllm?: VllmInfo | null;
 }
 
 function getSuccessRateChip(successRate: number): string {
@@ -118,6 +126,33 @@ export default function MetricsPanel() {
             </div>
           </div>
         )}
+
+        {/* vLLM Status */}
+        <div className="border-t border-swarm-border pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-swarm-muted">vLLM Inference</span>
+            {data.vllm != null ? (
+              <span className={`chip text-[10px] ${data.vllm.available ? "chip-normal" : "chip-critical"}`}>
+                {data.vllm.available ? "Online" : "Offline"}
+              </span>
+            ) : (
+              <span className="chip chip-elevated text-[10px]">Unknown</span>
+            )}
+          </div>
+          {data.vllm?.available && data.vllm.models.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {data.vllm.models.map(m => (
+                <span key={m} className="chip chip-elevated text-[10px]">{m.split("/").pop()}</span>
+              ))}
+            </div>
+          )}
+          {data.vllm?.error && (
+            <p className="text-xs text-red-400">{data.vllm.error}</p>
+          )}
+          {data.vllm == null && (
+            <p className="text-xs text-swarm-muted">Checking http://127.0.0.1:8000...</p>
+          )}
+        </div>
 
         {/* Throughput */}
         <div className="border-t border-swarm-border pt-3">

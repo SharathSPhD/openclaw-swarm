@@ -340,7 +340,15 @@ function snapshot() {
     modelCapabilities,
     modelInventoryStatus: inventoryStatus,
     adminKeyRequired: Boolean(process.env.ADMIN_API_KEY),
-    events: store.getEvents(100)
+    events: store.getEvents(100),
+    vllmStatus: vllmStatusCache,
+    autonomousStatus: autonomousLoop ? {
+      running: autonomousLoop.running || false,
+      currentObjective: autonomousLoop.competitiveCoordinator?.currentObjective || null,
+      currentPhase: autonomousLoop.competitiveCoordinator?.currentPhase || "idle",
+      totalObjectives: autonomousLoop.objectivesDispatched || 0,
+      intervalMs: autonomousLoop.currentInterval || autonomousLoop.baseInterval || 90000
+    } : null
   };
 }
 
@@ -1187,6 +1195,41 @@ registerOpsRoutes(app, {
 // Register metrics endpoints (GPU, latency, throughput)
 app.use("/api/metrics", createMetricsRouter({ store, queueManager: queue, modelCatalog: { discoverLocalModels, loadModelRouting, readModelLatency } }));
 
+// Declare late-initialized instances here (before route registration) to avoid TDZ errors.
+// These are set by startAutonomousLoop() after server.listen(). Routes use getter-based lazy refs.
+let worktreeManager = null;
+let competitiveCoord = null;
+let autonomousLoop = null;
+let teamLearningInstance = null;
+let explorationEngineInstance = null;
+let objectivePerformanceTrackerInstance = null;
+
+// Register autonomy/competitive/learning routes here (before catch-all) using lazy module-level refs.
+// These instances are set by startAutonomousLoop() after server.listen(), but the routes must be
+// registered before app.get("*") to avoid being caught by the catch-all.
+registerAutonomyRoutes(app, {
+  get autonomousLoop() { return autonomousLoop; },
+  get teamLearningInstance() { return teamLearningInstance; },
+  get objectivePerformanceTrackerInstance() { return objectivePerformanceTrackerInstance; },
+  get competitiveCoord() { return competitiveCoord; },
+  store,
+  db
+});
+
+registerCompetitiveRoutes(app, {
+  requireAdmin,
+  store,
+  get worktreeManager() { return worktreeManager; },
+  get competitiveCoord() { return competitiveCoord; }
+});
+
+registerLearningRoutes(app, {
+  get teamLearningInstance() { return teamLearningInstance; }
+});
+
+registerExplorationRoutes(app, {
+  get explorationEngineInstance() { return explorationEngineInstance; }
+});
 
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "not_found" });
@@ -1246,10 +1289,6 @@ setInterval(() => {
   broadcast("state", snapshot());
 }, cfg.pollMs);
 
-let worktreeManager = null;
-let competitiveCoord = null;
-let autonomousLoop = null;
-
 try {
   worktreeManager = new WorktreeManager({
     telegramBot,
@@ -1258,9 +1297,6 @@ try {
 } catch (err) {
   console.warn("[server] WorktreeManager init failed:", err?.message);
 }
-
-let teamLearningInstance = null;
-let explorationEngineInstance = null;
 
 function learningAwareChooseModel(opts) {
   const base = chooseModelForRole({
@@ -1319,7 +1355,7 @@ async function startAutonomousLoop() {
 
   explorationEngineInstance = new ExplorationEngine({ db, store, teamLearning: teamLearningInstance });
 
-  const objectivePerformanceTrackerInstance = new ObjectivePerformanceTracker({ db });
+  objectivePerformanceTrackerInstance = new ObjectivePerformanceTracker({ db });
   await objectivePerformanceTrackerInstance.init();
 
   const runTaskWithTools = (opts) => runTask({ ...opts, explorationEngine: explorationEngineInstance });
@@ -1364,28 +1400,7 @@ async function startAutonomousLoop() {
     admissionController: admission
   });
 
-  // Register route modules that depend on autonomy instances
-  registerCompetitiveRoutes(app, {
-    requireAdmin,
-    worktreeManager,
-    competitiveCoord
-  });
-
-  registerLearningRoutes(app, {
-    teamLearningInstance
-  });
-
-  registerExplorationRoutes(app, {
-    explorationEngineInstance
-  });
-
-  registerAutonomyRoutes(app, {
-    autonomousLoop,
-    teamLearningInstance,
-    objectivePerformanceTrackerInstance,
-    competitiveCoord
-  });
-
+  // Routes were pre-registered with lazy refs before app.get("*"); just start the loop.
   setTimeout(() => autonomousLoop.start(), 5000);
   console.log("[server] Competitive autonomous loop will start in 5 seconds.");
 }

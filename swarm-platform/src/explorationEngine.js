@@ -69,6 +69,158 @@ export class ExplorationEngine {
     this.codebaseAnalysisCalls = 0;
   }
 
+  async _findUntestedFunctions() {
+    const srcDir = path.join(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'), 'src');
+    const testDir = path.join(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'), 'tests');
+
+    const results = [];
+
+    // Get all test file content to search for function names
+    let testContent = "";
+    try {
+      const testFiles = fs.readdirSync(testDir, { recursive: true })
+        .filter(f => f.endsWith(".js") || f.endsWith(".ts"))
+        .map(f => path.join(testDir, f));
+      for (const tf of testFiles.slice(0, 20)) {
+        try { testContent += fs.readFileSync(tf, "utf8"); } catch { /* skip */ }
+      }
+    } catch { return results; }
+
+    // Scan src files for exported functions
+    try {
+      const srcFiles = fs.readdirSync(srcDir)
+        .filter(f => f.endsWith(".js") && !f.startsWith("_"))
+        .slice(0, 15);
+
+      for (const srcFile of srcFiles) {
+        const filePath = path.join(srcDir, srcFile);
+        try {
+          const content = fs.readFileSync(filePath, "utf8");
+          const lines = content.split("\n");
+
+          // Find exported functions
+          const exportPattern = /^export\s+(?:async\s+)?function\s+(\w+)|^export\s+(?:const|let)\s+(\w+)\s*=/gm;
+          let match;
+          const exported = [];
+          while ((match = exportPattern.exec(content)) !== null) {
+            exported.push(match[1] || match[2]);
+          }
+
+          // Check which are not mentioned in tests
+          const untested = exported.filter(fn => !testContent.includes(fn));
+
+          if (untested.length > 0) {
+            results.push({
+              file: `swarm-platform/src/${srcFile}`,
+              untestedFunctions: untested.slice(0, 5),
+              totalExports: exported.length
+            });
+          }
+        } catch { /* skip */ }
+      }
+    } catch { return results; }
+
+    return results.slice(0, 5); // Top 5 files with untested exports
+  }
+
+  async _findApiEndpointsWithoutValidation() {
+    const routesDir = path.join(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'), 'src', 'routes');
+    const results = [];
+
+    try {
+      const routeFiles = fs.readdirSync(routesDir).filter(f => f.endsWith(".js"));
+
+      for (const routeFile of routeFiles) {
+        const filePath = path.join(routesDir, routeFile);
+        try {
+          const content = fs.readFileSync(filePath, "utf8");
+          const lines = content.split("\n");
+
+          // Find POST/PUT/DELETE endpoints
+          const endpointPattern = /app\.(post|put|delete|patch)\s*\(\s*["'`]([^"'`]+)["'`]/g;
+          let match;
+          const unvalidated = [];
+
+          while ((match = endpointPattern.exec(content)) !== null) {
+            const method = match[1].toUpperCase();
+            const route = match[2];
+            // Find the position and check nearby lines for validation
+            const pos = match.index;
+            const nearbyLines = content.slice(pos, pos + 400);
+            const hasValidation = /validate|sanitize|schema|zod|joi|req\.body\?\./.test(nearbyLines);
+            const hasReqBody = /req\.body/.test(nearbyLines);
+
+            if (hasReqBody && !hasValidation) {
+              // Find line number
+              const lineNum = content.slice(0, pos).split("\n").length;
+              unvalidated.push({ method, route, line: lineNum });
+            }
+          }
+
+          if (unvalidated.length > 0) {
+            results.push({
+              file: `swarm-platform/src/routes/${routeFile}`,
+              unvalidatedEndpoints: unvalidated.slice(0, 3)
+            });
+          }
+        } catch { /* skip */ }
+      }
+    } catch { return results; }
+
+    return results.slice(0, 4);
+  }
+
+  async _findAsyncWithoutErrorHandling() {
+    const srcDir = path.join(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'), 'src');
+    const results = [];
+
+    try {
+      const files = fs.readdirSync(srcDir)
+        .filter(f => f.endsWith(".js") && !f.startsWith("_"))
+        .slice(0, 15);
+
+      for (const file of files) {
+        const filePath = path.join(srcDir, file);
+        try {
+          const content = fs.readFileSync(filePath, "utf8");
+
+          // Find async functions by name
+          const asyncFnPattern = /async\s+(?:function\s+)?(\w+)\s*\([^)]*\)\s*\{/g;
+          let match;
+          const unhandled = [];
+
+          while ((match = asyncFnPattern.exec(content)) !== null) {
+            const fnName = match[1];
+            if (fnName === "function" || fnName.length < 3) continue;
+
+            // Find the function body - look for try/catch within next 2000 chars
+            const bodyStart = match.index + match[0].length;
+            const bodySlice = content.slice(bodyStart, bodyStart + 2000);
+
+            // Check if it has try/catch or .catch() or error handling
+            const hasTryCatch = /try\s*\{/.test(bodySlice);
+            const hasCatchCall = /\.catch\s*\(/.test(bodySlice);
+            const hasAwait = /await\s/.test(bodySlice);
+
+            if (hasAwait && !hasTryCatch && !hasCatchCall) {
+              const lineNum = content.slice(0, match.index).split("\n").length;
+              unhandled.push({ name: fnName, line: lineNum });
+            }
+          }
+
+          if (unhandled.length > 0) {
+            results.push({
+              file: `swarm-platform/src/${file}`,
+              functions: unhandled.slice(0, 3)
+            });
+          }
+        } catch { /* skip */ }
+      }
+    } catch { return results; }
+
+    return results.slice(0, 4);
+  }
+
   _analyzeCodebase() {
     // Server runs from swarm-platform/ directory; __dirname is swarm-platform/src/
     const platformRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -78,7 +230,10 @@ export class ExplorationEngine {
     const analysis = {
       todos: [],
       largeFiles: [],
-      testGaps: []
+      testGaps: [],
+      errorHandlingGaps: [],
+      performanceBottlenecks: [],
+      apiValidationGaps: []
     };
 
     // Scan for TODO/FIXME/HACK/XXX comments
@@ -165,6 +320,154 @@ export class ExplorationEngine {
       }
     } catch { /* ok */ }
 
+    // Scan for functions/methods without error handling (try/catch)
+    const scanForErrorHandlingGaps = (dirPath) => {
+      try {
+        if (!fs.existsSync(dirPath)) return;
+        const files = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const file of files) {
+          if (file.isDirectory() || !file.name.endsWith('.js')) continue;
+          
+          const filePath = path.join(dirPath, file.name);
+          try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const lines = content.split('\n');
+            let inFunction = false;
+            let functionName = '';
+            let functionStart = 0;
+            let tryCatchCount = 0;
+            let braceDepth = 0;
+            
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              
+              // Detect function/method declarations (async functions, class methods)
+              if (/(async\s+)?function\s+\w+|^\s*async\s+\w+\s*\(|^\s*\w+\s*\([^)]*\)\s*{/.test(line)) {
+                if (!inFunction) {
+                  inFunction = true;
+                  functionStart = i + 1;
+                  functionName = line.match(/function\s+(\w+)|\b(\w+)\s*\(/)?.[1] || line.match(/\b(\w+)\s*\(/)?.[1] || 'unknown';
+                  tryCatchCount = 0;
+                  braceDepth = 0;
+                }
+              }
+              
+              if (inFunction) {
+                braceDepth += (line.match(/{/g) || []).length;
+                braceDepth -= (line.match(/}/g) || []).length;
+                
+                if (line.includes('try {') || line.includes('try{')) {
+                  tryCatchCount++;
+                }
+                
+                if (braceDepth <= 0 && line.includes('}')) {
+                  // End of function
+                  if (tryCatchCount === 0 && line.includes('await') && functionName !== 'constructor') {
+                    analysis.errorHandlingGaps.push({
+                      file: path.relative(platformRoot, filePath),
+                      line: functionStart,
+                      functionName,
+                      issue: 'Async function without try/catch for await expressions'
+                    });
+                  }
+                  inFunction = false;
+                }
+              }
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* dir may not exist */ }
+    };
+
+    scanForErrorHandlingGaps(srcDir);
+
+    // Scan for performance bottlenecks (sync file reads in loops, nested loops)
+    const scanForBottlenecks = (dirPath) => {
+      try {
+        if (!fs.existsSync(dirPath)) return;
+        const files = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const file of files) {
+          if (file.isDirectory() || !file.name.endsWith('.js')) continue;
+          
+          const filePath = path.join(dirPath, file.name);
+          try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const lines = content.split('\n');
+            
+            // Check for synchronous file reads in hot paths
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              if (/fs\.readFileSync\s*\(|fs\.readdirSync\s*\(/.test(line) && /for|while|forEach/.test(lines.slice(Math.max(0, i-5), i+1).join(' '))) {
+                analysis.performanceBottlenecks.push({
+                  file: path.relative(platformRoot, filePath),
+                  line: i + 1,
+                  issue: 'Synchronous file read/readdir in loop — consider batch reading'
+                });
+                break;
+              }
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* dir may not exist */ }
+    };
+
+    scanForBottlenecks(srcDir);
+
+    // Scan for API endpoints without input validation
+    const scanForValidationGaps = (dirPath) => {
+      try {
+        if (!fs.existsSync(dirPath)) return;
+        const routeFiles = fs.readdirSync(path.join(dirPath, 'routes'), { withFileTypes: true }).filter(f => f.name.endsWith('.js'));
+        
+        for (const file of routeFiles) {
+          const filePath = path.join(dirPath, 'routes', file.name);
+          try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const lines = content.split('\n');
+            
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              if (/(router\.post|router\.put|app\.post|app\.put)\s*\(/.test(line)) {
+                // Check if next 10 lines contain input validation
+                const nextLines = lines.slice(i, i + 10).join('\n');
+                if (!/validate|schema|joi|check|assert|typeof/.test(nextLines)) {
+                  analysis.apiValidationGaps.push({
+                    file: path.relative(platformRoot, filePath),
+                    line: i + 1,
+                    issue: 'POST/PUT endpoint without apparent input validation'
+                  });
+                }
+              }
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* routes dir may not exist */ }
+    };
+
+    scanForValidationGaps(srcDir);
+
+    // Real code analysis
+    return analysis;
+  }
+
+  async _analyzeCodebaseWithRealAnalysis() {
+    // Wrapper that runs the synchronous analysis plus the new async analyses
+    const analysis = this._analyzeCodebase();
+
+    try {
+      const [untestedFns, unvalidatedApis, asyncUnhandled] = await Promise.all([
+        this._findUntestedFunctions(),
+        this._findApiEndpointsWithoutValidation(),
+        this._findAsyncWithoutErrorHandling()
+      ]);
+
+      if (untestedFns.length > 0) analysis.untestedFunctions = untestedFns;
+      if (unvalidatedApis.length > 0) analysis.unvalidatedApis = unvalidatedApis;
+      if (asyncUnhandled.length > 0) analysis.asyncUnhandled = asyncUnhandled;
+    } catch (err) {
+      console.warn("[exploration] Code analysis failed:", err?.message);
+    }
+
     return analysis;
   }
 
@@ -237,12 +540,12 @@ export class ExplorationEngine {
     return tools;
   }
 
-  generateExplorationObjective(stats) {
+  async generateExplorationObjective(stats) {
     // Periodically run code analysis (every 5th call)
     this.codebaseAnalysisCalls += 1;
     if (this.codebaseAnalysisCalls % 5 === 0 || !this.codebaseAnalysisCache) {
       try {
-        this.codebaseAnalysisCache = this._analyzeCodebase();
+        this.codebaseAnalysisCache = await this._analyzeCodebaseWithRealAnalysis();
       } catch (err) {
         console.warn('[explorationEngine] Codebase analysis failed:', err?.message);
         this.codebaseAnalysisCache = null;
@@ -252,7 +555,7 @@ export class ExplorationEngine {
     const analysis = this.codebaseAnalysisCache;
     
     // Generate objectives from code analysis if data available
-    if (analysis && (analysis.todos.length > 0 || analysis.largeFiles.length > 0 || analysis.testGaps.length > 0)) {
+    if (analysis && (analysis.todos.length > 0 || analysis.largeFiles.length > 0 || analysis.testGaps.length > 0 || analysis.errorHandlingGaps.length > 0 || analysis.performanceBottlenecks.length > 0 || analysis.apiValidationGaps.length > 0)) {
       let objective = null;
       let category = null;
 
@@ -261,15 +564,60 @@ export class ExplorationEngine {
         const todoList = topTodos.map(t => `  - ${t.file}:${t.line}: ${t.text}`).join('\n');
         objective = `Fix the following TODO/FIXME items in the codebase:\n${todoList}\n\nEach fix should include or update corresponding unit tests. Reference the line numbers and understand the context before making changes.`;
         category = 'code_todos';
+      } else if (analysis.errorHandlingGaps.length > 0 && !this.completedExplorations.has('error_handling')) {
+        const gap = analysis.errorHandlingGaps[0];
+        objective = `Improve error handling in ${gap.file}:${gap.line} (function: ${gap.functionName}). Issue: ${gap.issue}. Wrap async/await calls in try/catch blocks with proper error logging. Log errors with context (file, line, operation). Do not use bare catch blocks. Update any corresponding tests to verify error paths.`;
+        category = 'error_handling';
+      } else if (analysis.performanceBottlenecks.length > 0 && !this.completedExplorations.has('performance_fix')) {
+        const bottleneck = analysis.performanceBottlenecks[0];
+        objective = `Fix performance bottleneck in ${bottleneck.file}:${bottleneck.line}. Issue: ${bottleneck.issue}. Optimize by refactoring to use batch operations or async file reads instead of synchronous loops. Measure improvement with timing benchmarks before/after. Ensure no functionality is broken.`;
+        category = 'performance_fix';
+      } else if (analysis.apiValidationGaps.length > 0 && !this.completedExplorations.has('api_validation')) {
+        const gap = analysis.apiValidationGaps[0];
+        objective = `Add input validation to ${gap.file}:${gap.line}. Issue: ${gap.issue}. Implement schema validation for request body/params. Check bounds, types, and required fields. Return 400 Bad Request with clear error messages for invalid inputs. Add tests to verify validation rejection paths.`;
+        category = 'api_validation';
       } else if (analysis.largeFiles.length > 0 && !this.completedExplorations.has('refactoring')) {
         const largeFile = analysis.largeFiles[0];
-        objective = `Refactor ${largeFile.file} which currently has ${largeFile.lines} lines of code. Extract helper functions, improve readability, and add clear comments. Do not change external behavior or API contracts. Maintain backward compatibility.`;
+        let functionNames = [];
+        try {
+          const content = fs.readFileSync(path.join(platformRoot, largeFile.file), 'utf-8');
+          const funcMatches = content.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)|^(?:export\s+)?class\s+(\w+)/gm);
+          for (const m of funcMatches) {
+            functionNames.push(m[1] || m[2]);
+          }
+        } catch { /* skip */ }
+        const funcList = functionNames.slice(0, 5).join(', ') || 'key functions';
+        objective = `Refactor ${largeFile.file} (${largeFile.lines} lines) by extracting helper functions. Focus on: ${funcList}. Split into smaller focused modules or extract utility functions. Do not change external API contracts. Add tests for any new utility functions.`;
         category = 'refactoring';
       } else if (analysis.testGaps.length > 0 && !this.completedExplorations.has('test_coverage')) {
         const gapFile = analysis.testGaps[0];
         const baseName = path.basename(gapFile.srcFile, '.js');
-        objective = `Write comprehensive unit tests for ${gapFile.srcFile}. Create the file at tests/unit/${baseName}.test.js using the node:test framework. Aim for >80% line coverage of non-trivial functions. Include edge cases, error conditions, and success paths.`;
+        let exports = [];
+        try {
+          const content = fs.readFileSync(path.join(platformRoot, gapFile.srcFile), 'utf-8');
+          const exportMatches = content.matchAll(/export\s+(?:async\s+)?(?:function|class)\s+(\w+)|export\s+(?:const|let)\s+(\w+)/g);
+          for (const m of exportMatches) {
+            exports.push(m[1] || m[2]);
+          }
+        } catch { /* skip */ }
+        const exportList = exports.slice(0, 5).join(', ') || 'main exports';
+        objective = `Write unit tests for ${gapFile.srcFile}. Create tests/unit/${baseName}.test.js using node:test. Cover these exports: ${exportList}. Focus on error paths, edge cases, and valid inputs. Aim for >80% line coverage.`;
         category = 'test_coverage';
+      } else if (analysis.untestedFunctions?.length > 0 && !this.completedExplorations.has('untested_functions') && Math.random() < 0.3) {
+        const item = analysis.untestedFunctions[Math.floor(Math.random() * analysis.untestedFunctions.length)];
+        const fns = item.untestedFunctions.slice(0, 3).join(", ");
+        objective = `Add unit tests for untested exports in ${item.file}: specifically test ${fns}. Each function should have at least 2 test cases covering normal operation and edge cases. Tests go in tests/unit/ following the existing node:test pattern.`;
+        category = 'untested_functions';
+      } else if (analysis.unvalidatedApis?.length > 0 && !this.completedExplorations.has('unvalidated_apis') && Math.random() < 0.3) {
+        const item = analysis.unvalidatedApis[Math.floor(Math.random() * analysis.unvalidatedApis.length)];
+        const routes = item.unvalidatedEndpoints.map(e => `${e.method} ${e.route} (line ${e.line})`).join(", ");
+        objective = `Add input validation to unprotected API endpoints in ${item.file}: ${routes}. Use the existing validateDispatchBody pattern from validation.js. Validate required fields, types, and sanitize string inputs. Return 400 with clear error messages for invalid input.`;
+        category = 'unvalidated_apis';
+      } else if (analysis.asyncUnhandled?.length > 0 && !this.completedExplorations.has('async_unhandled') && Math.random() < 0.25) {
+        const item = analysis.asyncUnhandled[Math.floor(Math.random() * analysis.asyncUnhandled.length)];
+        const fns = item.functions.map(f => `${f.name}() at line ${f.line}`).join(", ");
+        objective = `Add error handling to async functions in ${item.file} that currently have no try/catch: ${fns}. Wrap await calls in try/catch, log errors with context (function name, relevant IDs), emit appropriate error events via emitEvent if available, and ensure callers get meaningful error objects rather than unhandled rejections.`;
+        category = 'async_unhandled';
       }
 
       if (objective && category) {
@@ -348,19 +696,28 @@ Be specific and actionable. Reference the actual skill names and capabilities wh
   }
 
   weighObjectives(selfImprovementObj, explorationObj, stats) {
-    // Use externally computed weights if provided (from lesson-based feedback loop)
+    // Use externally computed weights if provided (from ROI or lesson-based feedback loop)
+    // If selfWeight/exploreWeight are explicitly set (sum != 1.0 from defaults), they came from ROI boost
+    // In that case, don't apply additional boosts as they would override the ROI signal
     const selfWeight = stats?.selfWeight ?? 0.6;
     const exploreWeight = stats?.exploreWeight ?? 0.4;
+    const hasExplicitWeights = stats?.selfWeight !== undefined || stats?.exploreWeight !== undefined;
 
-    const roundNumber = stats?.completed || 0;
-    const exploreBoost = Math.min(0.2, roundNumber * 0.02);
+    let adjustedExploreWeight = exploreWeight;
+    let adjustedSelfWeight = selfWeight;
 
-    // Boost weight if exploration objective was generated from code analysis
-    let adjustedExploreWeight = exploreWeight + exploreBoost;
-    if (explorationObj.fromCodeAnalysis) {
-      adjustedExploreWeight += 0.15;
+    // Only apply additional boosts if weights were NOT explicitly set by ROI logic
+    if (!hasExplicitWeights) {
+      const roundNumber = stats?.completed || 0;
+      const exploreBoost = Math.min(0.2, roundNumber * 0.02);
+
+      // Boost weight if exploration objective was generated from code analysis
+      adjustedExploreWeight = exploreWeight + exploreBoost;
+      if (explorationObj.fromCodeAnalysis) {
+        adjustedExploreWeight += 0.15;
+      }
+      adjustedSelfWeight = selfWeight - (adjustedExploreWeight - (exploreWeight + exploreBoost));
     }
-    const adjustedSelfWeight = selfWeight - (adjustedExploreWeight - (exploreWeight + exploreBoost));
 
     // High-priority exploration overrides weights
     if (explorationObj.weight > 0.9) {

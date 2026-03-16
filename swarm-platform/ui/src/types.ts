@@ -173,4 +173,5 @@ export interface WsMessage {
   type: string;
   payload: unknown;
   ts: string;
+  teamId?: string;
 }

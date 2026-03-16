@@ -1,9 +1,14 @@
-import { useState } from "react";
-import * as React from "react";
+import { useState, useEffect } from "react";
+import type { FormEvent } from "react";
 import { postApi, useApi } from "../hooks/useApi";
+import { useWebSocket } from "../hooks/useWebSocket";
 import MetricsPanel from "../components/MetricsPanel";
 import ModelLatencyChart from "../components/ModelLatencyChart";
 import ObjectivePipeline from "../components/ObjectivePipeline";
+import RoundHistoryChart from "../components/RoundHistoryChart";
+import GammaDiscoveriesPanel from "../components/GammaDiscoveriesPanel";
+import AgentCommunicationTrace from "../components/AgentCommunicationTrace";
+import CompetitiveBattleView from "../components/CompetitiveBattleView";
 import type { SnapshotResponse, WsMessage, AgentInfo, SwarmEvent } from "../types";
 
 interface DashboardPageProps {
@@ -50,7 +55,7 @@ function DispatchControls() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setResult(null);
@@ -232,11 +237,11 @@ function TeamTopology({ agents, competitiveStatus }: { agents: AgentInfo[]; comp
 
   const phase = competitiveStatus?.phase || "idle";
   const phaseLabels: Record<string, string> = {
-    idle: "Idle",
-    forking: "Fork: Both teams competing",
-    evaluating: "Evaluate: Program lead picking winner",
-    implementing: "Implement: Gamma building winner's approach",
-    merging: "Merge: Pushing to main"
+    idle: "Idle — Waiting for next objective",
+    forking: "⚡ Competing — Alpha & Beta solving in parallel",
+    evaluating: "🔍 Evaluating — Program lead selecting winner",
+    implementing: "🔨 Implementing — Gamma building winner's approach",
+    merging: "🚀 Merging — Pushing changes to main"
   };
 
   return (
@@ -245,7 +250,8 @@ function TeamTopology({ agents, competitiveStatus }: { agents: AgentInfo[]; comp
 
       <div className="mb-3 flex items-center gap-2">
         <span className="text-xs text-swarm-muted">Phase:</span>
-        <span className={`chip ${phase === "idle" ? "chip-normal" : "chip-elevated"}`}>
+        <span className={`chip ${phase === "idle" ? "chip-normal" : phase === "forking" ? "chip-elevated" : "chip-high"}`}
+          style={phase !== "idle" ? { animation: "pulse 2s infinite" } : {}}>
           {phaseLabels[phase] || phase}
         </span>
       </div>
@@ -385,7 +391,7 @@ function AgentReasoningLog({ lastMessage }: { lastMessage: WsMessage | null }) {
     ok: boolean;
   }>>([]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!lastMessage) return;
     if (lastMessage.type !== "task.completed" && lastMessage.type !== "task.failed") return;
 
@@ -555,6 +561,37 @@ interface LearningPulseData {
   roundHistoryLength: number;
 }
 
+function DashboardHeader({ connected }: { connected: boolean }) {
+  const [time, setTime] = useState<string>(new Date().toLocaleTimeString("en-US", { hour12: false }));
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTime(new Date().toLocaleTimeString("en-US", { hour12: false }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex items-center justify-between mb-6 pb-4 border-b border-swarm-border">
+      <div className="flex items-center gap-4">
+        <h1 className="text-3xl font-bold font-mono tracking-wider text-gray-100">
+          MISSION CONTROL
+        </h1>
+      </div>
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono text-swarm-muted">TIME</span>
+          <span className="text-sm font-mono text-gray-100 tracking-wide">{time}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className={`w-3 h-3 rounded-full ${connected ? "bg-emerald-400" : "bg-red-400"}`} />
+          <span className="text-xs font-mono text-swarm-muted">{connected ? "CONNECTED" : "DISCONNECTED"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LearningPulse() {
   const { data } = useApi<LearningPulseData>("/api/dashboard/learning-pulse", 8000);
   if (!data) return null;
@@ -596,10 +633,11 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
   const agents = (snapshot as { activeAgentDetails?: AgentInfo[] })?.activeAgentDetails ?? [];
   const events = snapshot?.events ?? [];
   const { data: competitiveStatus } = useApi<CompetitiveStatus>("/api/competitive/status", 5000);
+  const { connected } = useWebSocket();
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <DashboardHeader connected={connected} />
       <ObjectivePipeline />
       <SystemStatusBar snapshot={snapshot} />
       <MetricsPanel />
@@ -607,12 +645,18 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
         <AutonomyStatus />
         <LearningPulse />
       </div>
+      <CompetitiveBattleView lastMessage={lastMessage} competitiveStatus={competitiveStatus} />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <DispatchControls />
         <TeamTopology agents={agents} competitiveStatus={competitiveStatus} />
       </div>
       <ActiveAgentsTable agents={agents} />
       <AgentReasoningLog lastMessage={lastMessage} />
+      <RoundHistoryChart />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <GammaDiscoveriesPanel />
+        <AgentCommunicationTrace />
+      </div>
       <RecentAgentActivity events={events} />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <EventStream events={events} />

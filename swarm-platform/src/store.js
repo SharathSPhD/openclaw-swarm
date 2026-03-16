@@ -6,7 +6,7 @@ import { summarizeTeam } from "./scoring.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..");
-const dataDir = path.join(root, "data");
+const dataDir = process.env.SWARM_DATA_DIR || path.join(root, "data");
 const eventsFile = path.join(dataDir, "events.jsonl");
 const teamsFile = path.join(dataDir, "teams.json");
 const taskMapFile = path.join(dataDir, "task_sessions.json");
@@ -21,7 +21,8 @@ function readEvents() {
     .readFileSync(eventsFile, "utf8")
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line));
+    .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+    .filter(Boolean);
 }
 
 function readTeams() {
@@ -95,12 +96,15 @@ export class Store {
     const events = this.getEvents(this.maxEvents);
     const counts = {};
     const open = new Set();
+    // Tasks older than 10 min are considered done regardless (handles truncated logs)
+    const cutoff = Date.now() - 10 * 60 * 1000;
 
     for (const e of events) {
       const taskId = e.payload?.taskId;
       if (!taskId) continue;
       if (e.type === "task.started" || e.type === "agent.assigned") {
-        open.add(`${e.teamId}:${taskId}`);
+        const ts = new Date(e.ts).getTime();
+        if (ts >= cutoff) open.add(`${e.teamId}:${taskId}`);
       }
       if (e.type === "task.completed" || e.type === "task.failed" || e.type === "task.rejected") {
         open.delete(`${e.teamId}:${taskId}`);
@@ -118,8 +122,10 @@ export class Store {
     const teams = this.getTeams();
     const events = this.getEvents(this.maxEvents);
     const rows = teams.map((t) => ({ ...summarizeTeam(events, t.id), teamName: t.name }));
-    rows.sort((a, b) => b.score - a.score || b.accuracy - a.accuracy || b.completed - a.completed);
-    return rows.map((r, idx) => ({ ...r, rank: idx + 1 }));
+    // Filter out gamma and delta: only alpha and beta appear on leaderboard
+    const filtered = rows.filter(r => !["team-gamma", "team-delta"].includes(r.teamId));
+    filtered.sort((a, b) => b.score - a.score || b.accuracy - a.accuracy || b.completed - a.completed);
+    return filtered.map((r, idx) => ({ ...r, rank: idx + 1 }));
   }
 
   getTeamChats(teamId, limit = 200) {

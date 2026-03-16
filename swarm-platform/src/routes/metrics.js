@@ -205,7 +205,7 @@ export function createMetricsRouter({ store, queueManager, modelCatalog }) {
   router.get("/summary", async (_req, res) => {
     try {
       // Collect all metrics concurrently
-      const [gpuRes, latencyRes, throughputRes] = await Promise.all([
+      const [gpuRes, latencyRes, throughputRes, vllmRes] = await Promise.all([
         new Promise((resolve) => {
           // Simulate GET /gpu
           const result = {
@@ -360,6 +360,26 @@ export function createMetricsRouter({ store, queueManager, modelCatalog }) {
           }
 
           resolve(result);
+        }),
+
+        new Promise(async (resolve) => {
+          const vllmUrl = process.env.VLLM_URL || "http://127.0.0.1:8000";
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            const response = await fetch(`${vllmUrl}/v1/models`, {
+              signal: controller.signal
+            });
+            clearTimeout(timeout);
+            if (response.ok) {
+              const data = await response.json();
+              resolve({ available: true, models: (data.data || []).map(m => m.id), url: vllmUrl });
+            } else {
+              resolve({ available: false, models: [], url: vllmUrl, error: `HTTP ${response.status}` });
+            }
+          } catch (err) {
+            resolve({ available: false, models: [], url: vllmUrl, error: err?.name === "AbortError" ? "timeout" : (err?.message || "unreachable") });
+          }
         })
       ]);
 
@@ -378,11 +398,51 @@ export function createMetricsRouter({ store, queueManager, modelCatalog }) {
           perMinute: throughputRes.perMinute,
           successRate: throughputRes.successRate,
           queueDepth: throughputRes.queueDepth
-        }
+        },
+        vllm: vllmRes
       });
     } catch (err) {
       res.status(500).json({ error: "Failed to collect metrics", message: err.message });
     }
+  });
+
+  /**
+   * GET /api/metrics/vllm
+   * Returns vLLM inference server status and running models
+   */
+  router.get("/vllm", async (_req, res) => {
+    const vllmUrl = process.env.VLLM_URL || "http://127.0.0.1:8000";
+    const result = {
+      available: false,
+      models: [],
+      url: vllmUrl,
+      error: null
+    };
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch(`${vllmUrl}/v1/models`, {
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" }
+      });
+      clearTimeout(timeout);
+      
+      if (response.ok) {
+        const data = await response.json();
+        result.available = true;
+        result.models = (data.data || []).map(m => ({
+          id: m.id,
+          owned_by: m.owned_by || "vllm"
+        }));
+      } else {
+        result.error = `HTTP ${response.status}`;
+      }
+    } catch (err) {
+      result.error = err?.name === "AbortError" ? "timeout" : (err?.message || "unreachable");
+    }
+
+    res.json(result);
   });
 
   return router;

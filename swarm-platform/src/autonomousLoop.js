@@ -1,8 +1,45 @@
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+
+const DISPATCHED_OBJECTIVES_FILE = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  "..", "data", "dispatched_objectives.json"
+);
+
+function loadDispatchedObjectives() {
+  try {
+    const data = JSON.parse(fs.readFileSync(DISPATCHED_OBJECTIVES_FILE, "utf-8"));
+    return new Set(data.hashes || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDispatchedObjective(hashes) {
+  try {
+    // Keep only last 500 hashes to prevent unbounded growth
+    const arr = [...hashes].slice(-500);
+    fs.writeFileSync(DISPATCHED_OBJECTIVES_FILE, JSON.stringify({ hashes: arr }), "utf-8");
+  } catch { /* non-critical */ }
+}
+
+function hashObjective(text) {
+  return crypto.createHash("sha256").update(text.slice(0, 200)).digest("hex").slice(0, 16);
+}
+
 const META_OBJECTIVE_CATEGORIES = [
   {
     category: "code_improvement",
     generator: (stats) => {
-      return `Identify the single highest-impact code change in /home/sharaths/projects/openclaw_build/swarm-platform/src/ that would improve reliability or performance. Look for: error handling gaps in the event pipeline, race conditions in concurrent task execution, memory leaks in the event log, inefficient loops or synchronous operations that block the event loop. Analyze the code, identify the worst bottleneck, implement the fix, and write a comprehensive test case for it using node:test. Provide before/after performance metrics if applicable.`;
+      const focuses = [
+        "error handling gaps in the event pipeline and race conditions in concurrent task execution",
+        "memory leaks, inefficient loops, and synchronous operations blocking the event loop",
+        "missing input validation in API endpoints and security vulnerabilities",
+        "unused code, dead branches, and cleanup opportunities in the codebase"
+      ];
+      const focus = focuses[Math.floor(stats.completed / 2) % focuses.length];
+      return `Identify and fix the single highest-impact code issue in /home/sharaths/projects/openclaw_build/swarm-platform/src/ related to: ${focus}. Analyze the code, implement the fix, and write a test case using node:test. Provide before/after comparison if applicable.`;
     }
   },
   {
@@ -79,11 +116,63 @@ const META_OBJECTIVE_CATEGORIES = [
       const capped = Math.min(10, stats.completed);
       return `The swarm has completed ${capped} key objectives. Extract valuable insights: (1) most effective prompt patterns, (2) best model-role combinations, (3) failure modes and recovery strategies, (4) 3 concrete improvements to implement this week. Cap analysis to top 10 objectives for focus.`;
     }
+  },
+  {
+    category: "error_handling",
+    generator: (stats) => {
+      const focuses = [
+        "missing try/catch in async operations in openclawRunner.js, coordinator.js",
+        "unhandled Promise rejections in the event pipeline (store.js, eventProcessor.js)",
+        "network error recovery in telegramRelay.js and Ollama API calls",
+        "graceful degradation when vLLM (port 8000) or Ollama (port 11434) is unavailable"
+      ];
+      const focus = focuses[Math.floor((stats.completed || 0) / 2) % focuses.length];
+      return `Audit error handling in /home/sharaths/projects/openclaw_build/swarm-platform/src/ focusing on: ${focus}. For each gap found: show the specific file and line, explain the failure mode, implement the fix. Do NOT use bare catch blocks - errors should be logged with context.`;
+    }
+  },
+  {
+    category: "performance_optimization",
+    generator: (stats) => {
+      const targets = [
+        "store.getEvents() is called 5+ times per request cycle — implement caching with a TTL of 1000ms",
+        "metrics.js /summary endpoint duplicates GPU/latency/throughput logic — refactor to share computation",
+        "coordinator.js executeDAG runs subtasks in waves but doesn't parallelize within waves — check Promise.all usage",
+        "autonomousLoop.js _gatherStats() reads all 2000 events every cycle — cache the result for 10s"
+      ];
+      const target = targets[Math.floor((stats.completed || 0) / 3) % targets.length];
+      return `Optimize: ${target} in /home/sharaths/projects/openclaw_build/swarm-platform/src/. Implement the optimization, measure improvement with a benchmark (before/after timing), and ensure no functionality is broken by running npm test.`;
+    }
+  },
+  {
+    category: "api_completeness",
+    generator: (stats) => {
+      const checks = [
+        "GET /api/snapshot is missing activeAgentDetails in its response — add it from QueueManager",
+        "POST /api/competitive-run needs rate limiting — max 1 competitive run per 30 seconds",
+        "GET /api/leaderboard needs pagination for large event histories",
+        "WebSocket server should send an initial state snapshot on connect, not just incremental updates"
+      ];
+      const check = checks[Math.floor((stats.completed || 0) / 2) % checks.length];
+      return `API improvement: ${check}. Implement the change in the relevant route file under /home/sharaths/projects/openclaw_build/swarm-platform/src/routes/. Include input validation, error responses, and update API documentation in docs/ if it exists.`;
+    }
+  },
+  {
+    category: "observability",
+    generator: (stats) => {
+      const areas = [
+        "The autonomous loop has no metrics on how many objectives fail vs succeed — add a failure rate counter to _gatherStats()",
+        "Model errors from Ollama are logged but not counted — add per-model error rate tracking to teamLearning.js",
+        "The competitive evaluation timeout (timeoutMs) is not observable — log evaluation duration to events",
+        "Worker tree operations in worktreeManager.js have no timing metrics — add duration logging"
+      ];
+      const area = areas[Math.floor((stats.completed || 0) / 3) % areas.length];
+      return `Add observability: ${area} in /home/sharaths/projects/openclaw_build/swarm-platform/src/. Implement the metric collection, ensure it flows through the event system to the store, and verify it appears in relevant API responses.`;
+    }
   }
 ];
 
 export class AutonomousLoop {
-  constructor({ competitiveCoordinator, coordinator, telegramBot, telegramRelay, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController, objectivePerformanceTracker }) {
+  constructor({ competitiveCoordinator, coordinator, telegramBot, telegramRelay, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController, objectivePerformanceTracker, projectRoot }) {
     this.competitiveCoordinator = competitiveCoordinator;
     this.coordinator = coordinator;
     this.telegramBot = telegramBot;
@@ -104,6 +193,8 @@ export class AutonomousLoop {
     this.categoryIndex = 0;
     this.objectivesDispatched = 0;
     this.maxConcurrentObjectives = 1;
+    this.dispatchedObjectiveHashes = loadDispatchedObjectives();
+    this.projectRoot = projectRoot || process.cwd().replace(/\/swarm-platform.*/, "");
   }
 
   async start() {
@@ -139,6 +230,26 @@ export class AutonomousLoop {
         `Teams Alpha+Beta compete, Gamma implements, Delta explores.` +
         (staleActive.length > 0 ? `\n${staleActive.length} stale objectives cleaned up.` : "")
       ).catch(() => {});
+
+      // Check vLLM availability and notify
+      try {
+        const vllmUrl = process.env.VLLM_URL || "http://127.0.0.1:8000";
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(`${vllmUrl}/v1/models`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (response.ok) {
+          const data = await response.json();
+          const models = (data.data || []).map(m => m.id).join(", ");
+          await this.telegramBot.sendMessage(this.chatId,
+            `✅ *vLLM Online* — Models: ${models || "(none)"}`
+          ).catch(() => {});
+        }
+      } catch {
+        await this.telegramBot.sendMessage(this.chatId,
+          `⚠️ *vLLM Offline* — http://127.0.0.1:8000 unreachable`
+        ).catch(() => {});
+      }
     }
 
     while (this.running) {
@@ -170,9 +281,6 @@ export class AutonomousLoop {
         let result;
         if (isExternal && this.coordinator) {
           console.log(`[autonomousLoop] Exploration objective routed to team-delta`);
-          // #region agent log
-          fetch('http://localhost:7454/ingest/1e0718d6-c2bf-4928-9fab-1ef1d6f587b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a5b4ff'},body:JSON.stringify({sessionId:'a5b4ff',location:'autonomousLoop.js:delta-dispatch',message:'Delta dispatch',data:{objectiveId,category,isExternal:true,objectivePreview:objective.slice(0,150)},hypothesisId:'H3-delta-dispatch',timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
           result = await this.coordinator.executeObjective({ teamId: "team-delta", objective, objectiveId, maxIterations: 2 });
         } else if (this.competitiveCoordinator) {
           result = await this.competitiveCoordinator.executeCompetitiveObjective({ objective, objectiveId, category });
@@ -197,7 +305,30 @@ export class AutonomousLoop {
           result = await this.coordinator.executeObjective({ teamId: "team-alpha", objective, objectiveId, maxIterations: 2 });
         }
 
+        // Log category selection outcome for ROI tracking
+        if (result.status === "completed") {
+          console.log(`[autonomousLoop] Round complete: category=${category} objectiveId=${objectiveId}`);
+        }
+
         this.objectivesDispatched += 1;
+
+        // Send periodic health summary every 10 objectives
+        if (this.objectivesDispatched % 10 === 0 && this.telegramBot && this.chatId) {
+          const healthStats = this._gatherStats();
+          const healthMsg = [
+            `*Health Check — Round ${this.objectivesDispatched}*`,
+            `Scores: α=${healthStats.alphaScore} β=${healthStats.betaScore} γ=${healthStats.gammaScore}`,
+            `Completed: ${healthStats.completed} · Latency: ${Math.round(healthStats.avgLatency / 1000)}s`,
+            `Critic approval: ${Math.round(healthStats.criticApprovalRate * 100)}%`,
+            `Category queue: ${META_OBJECTIVE_CATEGORIES[this.categoryIndex]?.category || "?"}`
+          ].join("\n");
+          this.telegramBot.sendMessage(this.chatId, healthMsg).catch(() => {});
+        }
+
+        // Track dispatched objective hash for deduplication
+        const hash = hashObjective(objective);
+        this.dispatchedObjectiveHashes.add(hash);
+        saveDispatchedObjective(this.dispatchedObjectiveHashes);
 
       } catch (err) {
         const errMsg = err?.stack || err?.message || String(err);
@@ -241,6 +372,53 @@ export class AutonomousLoop {
     console.log("[autonomousLoop] Stopped.");
   }
 
+  async _preflightCheck(objective) {
+    const checks = { passed: true, issues: [] };
+
+    // 1. Length check
+    if (!objective || objective.length < 20) {
+      checks.issues.push("objective too short");
+      checks.passed = false;
+      return checks;
+    }
+
+    // 2. File reference check - if objective mentions a file path, verify it exists
+    const fileRefPattern = /(?:swarm-platform\/src\/[\w/.]+\.js|swarm-platform\/tests\/[\w/.]+\.js)/g;
+    const fileRefs = objective.match(fileRefPattern) || [];
+    for (const ref of fileRefs) {
+      const fullPath = path.join(this.projectRoot || process.cwd().replace(/\/swarm-platform.*/, ""), ref);
+      if (!fs.existsSync(fullPath)) {
+        // Try relative to project root
+        const altPath = path.join("/home/sharaths/projects/openclaw_build", ref);
+        if (!fs.existsSync(altPath)) {
+          checks.issues.push(`referenced file not found: ${ref}`);
+          // Don't fail - just warn, the objective might still be valid
+        }
+      }
+    }
+
+    if (checks.issues.length === 0) {
+      checks.passed = true;
+    }
+
+    return checks;
+  }
+
+  async _generateAnalysisObjective() {
+    if (!this.explorationEngine) return null;
+
+    try {
+      const obj = await this.explorationEngine.generateExplorationObjective();
+      if (obj && obj.objective && obj.objective.length > 30) {
+        console.log(`[autonomousLoop] Analysis-driven objective: ${obj.objective.slice(0, 80)}`);
+        return obj;
+      }
+    } catch (err) {
+      console.warn("[autonomousLoop] Analysis objective failed:", err?.message);
+    }
+    return null;
+  }
+
   _calculateDynamicInterval(queueDepth, loadState) {
     // Backoff on large queues
     if (queueDepth > 30) return 15000;
@@ -267,9 +445,28 @@ export class AutonomousLoop {
       console.log(`[autonomousLoop] selfWeight=${selfWeight} (${criticalCount} critical lessons → boosting exploration)`);
     }
 
-    // Always generate both objective types so weighObjectives can compare
-    const category = META_OBJECTIVE_CATEGORIES[this.categoryIndex];
-    this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+    // Every 4th objective: check ROI and potentially override category selection
+    let category;
+    if (this.objectivesDispatched > 0 && this.objectivesDispatched % 4 === 0 && this.objectivePerformanceTracker) {
+      try {
+        const topROI = await this.objectivePerformanceTracker.getTopROICategories(3);
+        if (topROI.length > 0 && topROI[0].avgRoi > 0) {
+          // Find the top-ROI category in META_OBJECTIVE_CATEGORIES
+          const topCategoryName = topROI[0].category;
+          const topCategoryIdx = META_OBJECTIVE_CATEGORIES.findIndex(c => c.category === topCategoryName);
+          if (topCategoryIdx >= 0) {
+            category = META_OBJECTIVE_CATEGORIES[topCategoryIdx];
+            console.log(`[autonomousLoop] ROI-driven category override: ${topCategoryName} (roi=${topROI[0].avgRoi.toFixed(2)})`);
+          }
+        }
+      } catch { /* best-effort, fall through to default */ }
+    }
+    if (!category) {
+      category = META_OBJECTIVE_CATEGORIES[this.categoryIndex];
+      this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+    } else {
+      this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+    }
     let selfObjectiveText = category.generator(stats);
 
     // Inject learning context into self-improvement objective
@@ -285,13 +482,58 @@ export class AutonomousLoop {
       }
     }
 
+    // Inject gamma discoveries as context for self-improvement objectives
+    if (this.competitiveCoordinator) {
+      const gammaInsights = this.competitiveCoordinator.getGammaInsights();
+      if (gammaInsights.length > 0) {
+        const gammaContext = gammaInsights.slice(-2)
+          .map(g => `${g.discoveries || ""}${g.recommendations ? `\nRecommendations: ${g.recommendations}` : ""}`)
+          .join("\n---\n")
+          .slice(0, 400);
+        if (gammaContext.trim()) {
+          selfObjectiveText += `\n\nGamma team's recent discoveries from implementation: ${gammaContext}. Build on these findings — don't repeat work already done by Gamma.`;
+        }
+      }
+    }
+
+    // Vary objective text to avoid exact duplicates by appending context
+    const runCount = this.objectivesDispatched;
+    if (runCount > 0 && runCount % 3 === 0) {
+      selfObjectiveText += `\n\nContext: This is run #${runCount}. Focus on issues NOT covered in previous rounds. Look for NEW specific problems.`;
+    }
+
+    // Check for duplicate and skip if already dispatched recently
+    const selfHash = hashObjective(selfObjectiveText);
+    if (this.dispatchedObjectiveHashes.has(selfHash)) {
+      // Force advance to next category
+      this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+      const nextCategory = META_OBJECTIVE_CATEGORIES[this.categoryIndex];
+      this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+      selfObjectiveText = nextCategory.generator(stats);
+    }
+
     const selfObj = { objective: selfObjectiveText, objectiveId, isExternal: false, category: category.category };
 
     // Use weighObjectives if explorationEngine is available
     if (this.explorationEngine && this.objectivesDispatched > 0) {
-      const explorationData = this.objectivesDispatched % 6 === 0
-        ? this.explorationEngine.generateSkillDiscoveryObjective()
-        : this.explorationEngine.generateExplorationObjective(stats);
+      let explorationData;
+
+      // Every 3rd objective: try to use real code analysis first
+      if (this.objectivesDispatched % 3 === 2) {
+        const analysisObj = await this._generateAnalysisObjective();
+        if (analysisObj) {
+          explorationData = analysisObj;
+        } else {
+          explorationData = this.objectivesDispatched % 6 === 0
+            ? this.explorationEngine.generateSkillDiscoveryObjective()
+            : await this.explorationEngine.generateExplorationObjective(stats);
+        }
+      } else {
+        explorationData = this.objectivesDispatched % 6 === 0
+          ? this.explorationEngine.generateSkillDiscoveryObjective()
+          : await this.explorationEngine.generateExplorationObjective(stats);
+      }
+
       const exploreObj = { objective: explorationData.objective, objectiveId, isExternal: true, category: explorationData.category };
 
       // Boost weights based on ROI data if objectivePerformanceTracker is available
@@ -320,16 +562,40 @@ export class AutonomousLoop {
 
       const weighted = this.explorationEngine.weighObjectives(selfObj, exploreObj, { ...stats, selfWeight: adjustedSelfWeight, exploreWeight: adjustedExploreWeight });
 
-      // Use global lesson tie-breaker: if weights are close (within 0.1), defer to lesson-suggested category
+      // Log category selection with weights
+      const selected = weighted.selected;
+      const selectedCategory = selected.category;
+      const selectedWeight = selected.isExternal ? adjustedExploreWeight : adjustedSelfWeight;
+      const roiBoost = this.objectivePerformanceTracker ? await this.objectivePerformanceTracker.getTopROICategories(1).catch(() => []) : [];
+      const roiValue = roiBoost.length > 0 ? roiBoost[0].avgRoi : 0;
+      console.log(`[autonomousLoop] Selected category=${selectedCategory} weight=${selectedWeight?.toFixed(2)} (roi=${roiValue?.toFixed(2) || 0})`);
+
+      // Use global lesson tie-breaker: if weights are close (within 0.1), log suggested category (informational)
       if (this.teamLearning && Math.abs(adjustedSelfWeight - adjustedExploreWeight) < 0.1) {
         this.teamLearning.getSuggestedObjective(stats).then(suggestedCategory => {
           if (suggestedCategory) {
             console.log(`[autonomousLoop] Cross-team lesson tie-breaker suggests category: ${suggestedCategory}`);
           }
-        }).catch(() => {});
+        }).catch((err) => {
+          console.warn(`[autonomousLoop] Tie-breaker lookup failed: ${err?.message}`);
+        });
       }
 
-      return weighted.selected;
+      // Pre-flight validation
+      try {
+        const preflight = await this._preflightCheck(selected.objective);
+        if (!preflight.passed) {
+          console.warn(`[autonomousLoop] Pre-flight failed for objective: ${preflight.issues.join(", ")}`);
+          // Try to get a fallback
+          selected.objective = `Review and improve error handling in swarm-platform/src/server.js: ensure all async route handlers have proper try/catch blocks and return meaningful error responses.`;
+        } else if (preflight.issues.length > 0) {
+          console.log(`[autonomousLoop] Pre-flight warnings: ${preflight.issues.join(", ")} (proceeding anyway)`);
+        }
+      } catch (err) {
+        console.warn("[autonomousLoop] Pre-flight check error:", err?.message);
+      }
+
+      return selected;
     }
 
     return selfObj;

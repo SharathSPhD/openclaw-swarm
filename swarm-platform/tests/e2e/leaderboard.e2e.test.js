@@ -1,22 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const port = 3112;
 let proc;
+let tmpDir;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 test.before(async () => {
+  // Use an isolated temp data dir so the live swarm's events don't interfere
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "swarm-test-"));
+  // Seed with the real teams.json so team-alpha exists
+  fs.copyFileSync(path.join(process.cwd(), "data", "teams.json"), path.join(tmpDir, "teams.json"));
+
   proc = spawn("node", ["src/server.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       PORT: String(port),
       RUNNER_MODE: "mock",
-      ADMIN_API_KEY: "test-key"
+      ADMIN_API_KEY: "test-key",
+      SWARM_DATA_DIR: tmpDir
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -26,6 +36,7 @@ test.before(async () => {
 test.after(async () => {
   if (proc) proc.kill("SIGTERM");
   await wait(500);
+  if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 test("task completion updates leaderboard", async () => {

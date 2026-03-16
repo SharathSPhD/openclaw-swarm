@@ -273,6 +273,23 @@ Objective: ${objective}`;
           const chosen = this.chooseModelForRole({ role: subTask.role, modelTier: "standard", teamId });
           const model = chosen?.selectedModel || "qwen2.5:7b";
 
+          // Emit message event before dispatching to agent
+          this.emitEvent(this.createEvent({
+            type: "agent.message",
+            teamId,
+            source: "coordinator",
+            payload: {
+              objectiveId,
+              direction: "to_agent",
+              fromRole: "coordinator",
+              toRole: subTask.role,
+              subTaskId: subTask.id,
+              message: taskPrompt.slice(0, 500),
+              model,
+              wave: waveIndex + 1
+            }
+          })).catch(() => {});
+
           return new Promise((resolve) => {
             this.runTask({
               teamId,
@@ -292,6 +309,22 @@ Objective: ${objective}`;
                     outputLength: (event.payload?.output || "").length,
                     roundId: objectiveId
                   });
+                  // Emit agent.message for the response
+                  this.emitEvent(this.createEvent({
+                    type: "agent.message",
+                    teamId,
+                    source: subTask.role,
+                    payload: {
+                      objectiveId,
+                      direction: "from_agent",
+                      fromRole: subTask.role,
+                      toRole: "coordinator",
+                      subTaskId: subTask.id,
+                      message: (event.payload?.output || "").slice(0, 500),
+                      model: event.payload?.model || model,
+                      durationMs: event.payload?.durationMs || null
+                    }
+                  })).catch(() => {});
                   resolve({ taskId: subTask.id, ok: true, output: event.payload?.output || null, error: null });
                 } else if (event.type === "task.failed") {
                   this.teamLearning?.recordTaskOutcome({
@@ -308,7 +341,34 @@ Objective: ${objective}`;
       );
 
       for (const r of waveResults) {
-        if (r) subTaskResults.set(r.taskId, r.ok ? r.output : { error: r.error, output: null });
+        if (r) {
+          subTaskResults.set(r.taskId, r.ok ? r.output : { error: r.error, output: null });
+
+          // Emit agent.handoff event after each task completes
+          const subTask = byId.get(r.taskId);
+          if (subTask && r.ok) {
+            const nextWaveIndex = waveIndex + 1;
+            const nextWave = waves[nextWaveIndex] || [];
+            const toRole = nextWave.length > 0
+              ? byId.get(nextWave[0])?.role || "pending"
+              : "integrator";
+
+            await this.emitEvent(this.createEvent({
+              type: "agent.handoff",
+              teamId,
+              source: "coordinator",
+              payload: {
+                objectiveId,
+                fromRole: subTask.role,
+                toRole,
+                subTaskId: subTask.id,
+                status: "completed",
+                outputPreview: (r.output || "").slice(0, 200),
+                durationMs: null
+              }
+            }));
+          }
+        }
       }
     }
 
@@ -333,6 +393,23 @@ ${outputsText}
 Respond with valid JSON only: { "approved": true, "feedback": "...", "issuesFound": [] }
 If approved is false, provide specific, actionable feedback for improvement.`;
 
+    // Emit critic review start
+    await this.emitEvent(this.createEvent({
+      type: "agent.message",
+      teamId,
+      source: "coordinator",
+      payload: {
+        objectiveId,
+        direction: "to_agent",
+        fromRole: "coordinator",
+        toRole: "critic",
+        subTaskId: `critic-${objectiveId}`,
+        message: prompt.slice(0, 500),
+        model: "evaluator",
+        wave: "critic"
+      }
+    })).catch(() => {});
+
     const result = await runCoordinatorPrompt({
       prompt,
       modelName: this.modelName,
@@ -341,6 +418,23 @@ If approved is false, provide specific, actionable feedback for improvement.`;
 
     let parsed = extractJson(result.stdout);
     const approved = Boolean(parsed?.approved ?? parsed?.pass ?? true);
+
+    // Emit agent.message for the critic's response
+    await this.emitEvent(this.createEvent({
+      type: "agent.message",
+      teamId,
+      source: "critic",
+      payload: {
+        objectiveId,
+        direction: "from_agent",
+        fromRole: "critic",
+        toRole: "coordinator",
+        subTaskId: `critic-${objectiveId}`,
+        message: (result.stdout || "").slice(0, 500),
+        model: "evaluator",
+        durationMs: null
+      }
+    })).catch(() => {});
 
     if (!approved) {
       await this.emitEvent(

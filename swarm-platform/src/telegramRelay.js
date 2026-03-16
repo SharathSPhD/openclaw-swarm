@@ -1,5 +1,12 @@
 import crypto from "node:crypto";
 
+function escapeMd(text) {
+  if (!text) return "";
+  return String(text).replace(/[_*[\]()~`>#+=|{}.!-]/g, c => `\\${c}`);
+}
+
+export { escapeMd };
+
 export class TelegramRelay {
   constructor({ botToken, defaultChatId, maxRetries = 3, retryBaseMs = 1200 }) {
     this.botToken = botToken;
@@ -8,7 +15,7 @@ export class TelegramRelay {
     this.retryBaseMs = retryBaseMs;
   }
 
-  async send({ text, chatId }) {
+  async send({ text, chatId, parseMode = "MarkdownV2" }) {
     if (!this.botToken || !(chatId || this.defaultChatId)) {
       return { ok: false, reason: "telegram_not_configured" };
     }
@@ -21,7 +28,7 @@ export class TelegramRelay {
         const res = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: target, text, disable_web_page_preview: true })
+          body: JSON.stringify({ chat_id: target, text, parse_mode: parseMode, disable_web_page_preview: true })
         });
 
         const data = await res.json();
@@ -118,13 +125,22 @@ export class TelegramRelay {
       if (text.length > 4000) {
         // If too long, truncate gracefully
         const truncated = text.slice(0, 3900) + "\n...[truncated]";
-        return this.send({ text: truncated, chatId: target });
+        return this.send({ text: truncated, chatId: target, parseMode: "MarkdownV2" });
       }
 
-      return this.send({ text, chatId: target });
+      return this.send({ text, chatId: target, parseMode: "MarkdownV2" });
     } catch (err) {
       console.error("[telegramRelay] sendSwarmSummary error:", err?.message);
       return { ok: false, reason: "summary_composition_failed", error: err?.message };
     }
+  }
+
+  async sendFormatted({ text, chatId }) {
+    if (!this.botToken || !(chatId || this.defaultChatId)) {
+      return { ok: false, reason: "telegram_not_configured" };
+    }
+
+    const target = chatId || this.defaultChatId;
+    return this.send({ text, chatId: target, parseMode: "MarkdownV2" });
   }
 }

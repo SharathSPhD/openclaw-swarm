@@ -1,6 +1,7 @@
 import { SwarmCoordinator } from "./coordinator.js";
 import { buildEvaluationPrompt, extractAndValidate } from "./structuredEvaluator.js";
 import { ObjectivePerformanceTracker } from "./objectivePerformance.js";
+import { escapeMd } from "./telegramRelay.js";
 
 export class CompetitiveCoordinator {
   constructor({
@@ -49,6 +50,7 @@ export class CompetitiveCoordinator {
 
     this.currentPhase = "idle";
     this.currentObjective = null;
+    this.gammaDiscoveries = []; // Store up to 20 recent gamma discoveries for Program Lead context
   }
 
   async _notify(text) {
@@ -69,6 +71,9 @@ export class CompetitiveCoordinator {
     }));
 
     console.log(`[competitive] Objective started: ${objective.slice(0, 80)}...`);
+
+    // Send round start Telegram message
+    await this._sendRoundStart({ objective, objectiveId, category: this.currentObjective?.category });
 
     // Capture leaderboard scores before the round for ROI tracking
     const preRoundLeaderboard = this.store?.getLeaderboard?.() || [];
@@ -174,12 +179,7 @@ export class CompetitiveCoordinator {
       const winnerOutput = winnerTeam === "team-alpha" ? alphaResult : betaResult;
       const gammaResult = await this._implementWinner(winnerOutput, objective, objectiveId);
 
-      await this.emitEvent(this.createEvent({
-        type: "reward.applied",
-        teamId: "team-gamma",
-        source: "competitive-coordinator",
-        payload: { objectiveId, pointsAdded: 75, reason: "competitive_implementation" }
-      }));
+      // Gamma implements but does not earn competitive points (only logs work)
 
       // Phase 4: Merge - merge gamma's work into main and push
       this.currentPhase = "merging";
@@ -201,12 +201,7 @@ export class CompetitiveCoordinator {
             }
           }));
 
-          await this.emitEvent(this.createEvent({
-            type: "reward.applied",
-            teamId: "team-gamma",
-            source: "competitive-coordinator",
-            payload: { objectiveId, pointsAdded: 50, reason: "competitive_merge" }
-          }));
+          // Gamma merge does not earn points (only logs work)
 
           console.log(`[competitive] Merged. Changed: ${mergeInfo.changedFiles.length} files. Restart: ${mergeInfo.needsRestart}`);
 
@@ -282,14 +277,8 @@ export class CompetitiveCoordinator {
                 }
 
                 if (!restarted) {
-                  // Fallback: Emit SIGUSR2 (nodemon restart) or SIGTERM (graceful shutdown → supervisor restarts)
-                  const pid = process.pid;
-                  console.log(`[competitive] PM2 unavailable, sending restart signal to pid ${pid}`);
-                  try {
-                    process.kill(pid, "SIGUSR2"); // nodemon reload
-                  } catch {
-                    try { process.kill(pid, "SIGTERM"); } catch { /* best effort */ }
-                  }
+                  console.log("[competitive] Using exit(42) for run-swarm.sh wrapper restart");
+                  process.exit(42);
                 }
               }, 3000);
             } catch { /* best effort restart */ }
@@ -340,6 +329,19 @@ export class CompetitiveCoordinator {
               } : null
             }
           }));
+
+          // Log adaptation telemetry
+          if (lessons && lessons.length > 0) {
+            const lessonsByTeam = {};
+            for (const l of lessons) {
+              if (!lessonsByTeam[l.teamId]) lessonsByTeam[l.teamId] = [];
+              lessonsByTeam[l.teamId].push(`${l.category}: ${l.lesson?.slice(0, 60)}`);
+            }
+            console.log(`[competitive] Round adaptation: ${JSON.stringify(lessonsByTeam)}`);
+          }
+          if (feedback) {
+            console.log(`[competitive] Cross-team feedback: winner=${feedback.winner}, loser advice length=${feedback.feedbackToLoser?.message?.length || 0}`);
+          }
         } catch (err) {
           console.warn("[competitive] Learning analysis failed:", err?.message);
         }
@@ -463,7 +465,18 @@ export class CompetitiveCoordinator {
       ? (betaResult.finalOutput || "(no output)").slice(0, 3000)
       : `FAILED: ${betaResult.error || "unknown"}`;
 
-    const prompt = buildEvaluationPrompt(alphaOutput, betaOutput, objective);
+    // Include recent gamma discoveries in evaluation context
+    const recentDiscoveries = this.gammaDiscoveries.slice(-3)
+      .map(d => `${d.ts}: ${d.discoveries.slice(0, 100)}`)
+      .join("\n");
+    const gammaContext = recentDiscoveries
+      ? `\n\nGamma team recent discoveries (for context): ${recentDiscoveries}`
+      : "";
+
+    let prompt = buildEvaluationPrompt(alphaOutput, betaOutput, objective);
+    if (gammaContext) {
+      prompt += gammaContext;
+    }
 
     return new Promise((resolve) => {
       const args = ["agent", "--agent", "evaluator", "--message", prompt, "--json"];
@@ -561,52 +574,101 @@ export class CompetitiveCoordinator {
   }
 
   async _implementWinner(winnerResult, objective, objectiveId) {
+    // Build lessons context from recent rounds
+    const lessonsText = this.teamLearning?.roundHistory?.slice(-3)
+      ?.flatMap(r => r.lessons || [])
+      ?.filter(l => l.severity === "critical")
+      ?.map(l => l.lesson)
+      ?.join("\n") || "(no critical lessons yet)";
+
     const gammaObjective = `Implement the following solution for the objective below.
 
 Original objective: ${objective}
 
+Recent critical lessons from past rounds: ${lessonsText}
+
 Winning team's output (use this as the basis for implementation):
 ${(winnerResult.finalOutput || "").slice(0, 4000)}
 
-Your task: Take the winning team's analysis/solution and implement it. If it involves code changes, make them in the codebase at /codebase/swarm-platform/. If it's a report or analysis, refine and finalize it.`;
+Your task:
+1. IMPLEMENT: Take the winning team's analysis/solution and implement it in the codebase at /codebase/swarm-platform/. If it involves code changes, make them. If it's a report or analysis, refine and finalize it.
+2. EXPLORE: After implementing, briefly scan adjacent files and modules for obvious quick wins (bugs, performance issues, security gaps, error handling gaps). Do NOT make changes beyond the implementation task.
+3. REPORT: Return your response in this structure:
+   IMPLEMENTATION: [what you implemented]
+   DISCOVERIES: [bulleted list of issues found in adjacent code, max 5]
+   RECOMMENDATIONS: [1-3 specific improvements for future rounds]`;
 
     const gammaId = `${objectiveId}-gamma`;
 
-    return this.gammaCoordinator.executeObjective({
+    const gammaResult = await this.gammaCoordinator.executeObjective({
       teamId: "team-gamma",
       objective: gammaObjective,
       objectiveId: gammaId,
       maxIterations: 2
     });
+
+    // Extract discoveries and recommendations from gamma output
+    if (gammaResult.finalOutput) {
+      try {
+        const output = gammaResult.finalOutput;
+        const discoveriesMatch = output.match(/DISCOVERIES:\s*([\s\S]*?)(?=RECOMMENDATIONS:|$)/);
+        const recommendationsMatch = output.match(/RECOMMENDATIONS:\s*([\s\S]*?)$/);
+
+        if (discoveriesMatch || recommendationsMatch) {
+          const entry = {
+            ts: new Date().toISOString(),
+            discoveries: discoveriesMatch ? discoveriesMatch[1].trim() : "",
+            recommendations: recommendationsMatch ? recommendationsMatch[1].trim() : ""
+          };
+          this.gammaDiscoveries.push(entry);
+          if (this.gammaDiscoveries.length > 20) {
+            this.gammaDiscoveries.shift(); // Keep rolling 20
+          }
+          console.log("[gamma] Discoveries:", JSON.stringify(entry.discoveries.slice(0, 150)));
+        }
+      } catch (err) {
+        console.warn("[gamma] Failed to parse discoveries:", err?.message);
+      }
+    }
+
+    return gammaResult;
+  }
+
+  async _sendRoundStart({ objective, objectiveId, category }) {
+    if (!this.telegramBot || !this.chatId) return;
+    
+    const objEscaped = escapeMd(objective.slice(0, 120));
+    const objEllipsis = objective.length > 120 ? "\\.\\.\\." : "";
+    const catEscaped = escapeMd(category || "general");
+    
+    const text = `🏁 *Round Starting*\n` +
+      `Alpha vs Beta competing\n` +
+      `Category: \`${catEscaped}\`\n` +
+      `Objective: _${objEscaped}${objEllipsis}_`;
+    
+    await this.telegramBot.sendFormatted({ text, chatId: this.chatId }).catch(() => {});
   }
 
   async _sendRoundSummary({ objective, objectiveId, evaluation, winnerTeam, loserTeam, alphaResult, betaResult, gammaResult, mergeInfo, lessons, feedback, elapsedMs }) {
-    const lines = [];
-    const elapsed = elapsedMs ? ` · ${Math.round(elapsedMs / 1000)}s` : "";
-    lines.push(`*Round Complete: ${objectiveId}*${elapsed}`);
-    lines.push(`Objective: _${objective.slice(0, 200)}_`);
-    lines.push("");
+    if (!this.telegramBot || !this.chatId) return;
 
-    const alphaScore = evaluation?.alphaScore ?? "?";
-    const betaScore = evaluation?.betaScore ?? "?";
-    lines.push(`*Winner: ${winnerTeam}* (${alphaScore} vs ${betaScore})`);
-    if (evaluation?.reasoning) {
-      lines.push(`Why: ${evaluation.reasoning.slice(0, 200)}`);
-    }
-    lines.push("");
-
+    const elapsedSec = elapsedMs ? Math.round(elapsedMs / 1000) : 0;
+    const objShort = escapeMd(objective.slice(0, 120));
+    const objEllipsis = objective.length > 120 ? "\\.\\.\\." : "";
+    const winner = escapeMd(winnerTeam);
+    const alphaScoreStr = escapeMd(String(evaluation?.alphaScore ?? "?"));
+    const betaScoreStr = escapeMd(String(evaluation?.betaScore ?? "?"));
+    
     const sanitize = (raw) => {
       if (!raw) return "";
       let text = raw.trim();
-      // Strip openclaw JSON wrapper if present
       try {
         const obj = JSON.parse(text);
         if (obj?.result?.payloads) {
           const payload = obj.result.payloads.find(p => p?.text);
           if (payload) text = payload.text;
         }
-      } catch { /* not JSON, use as-is */ }
-      // Strip Ollama error wrappers
+      } catch { /* not JSON */ }
       if (text.includes("Ollama API error")) {
         const errMatch = text.match(/"error":"([^"]+)"/);
         text = errMatch ? `[Model error: ${errMatch[1]}]` : "[Model error]";
@@ -614,47 +676,53 @@ Your task: Take the winning team's analysis/solution and implement it. If it inv
       return text.trim();
     };
 
-    const alphaOut = sanitize(alphaResult?.finalOutput);
-    const betaOut = sanitize(betaResult?.finalOutput);
-    if (alphaOut) lines.push(`Alpha: ${alphaOut.slice(0, 300)}${alphaOut.length > 300 ? "..." : ""}`);
-    if (betaOut) lines.push(`Beta: ${betaOut.slice(0, 300)}${betaOut.length > 300 ? "..." : ""}`);
+    const alphaOut = sanitize(alphaResult?.finalOutput)?.slice(0, 150) || "";
+    const betaOut = sanitize(betaResult?.finalOutput)?.slice(0, 150) || "";
+    const gammaOut = sanitize(gammaResult?.finalOutput)?.slice(0, 200) || "";
+    
+    const alphaEscaped = escapeMd(alphaOut);
+    const betaEscaped = escapeMd(betaOut);
+    const gammaEscaped = escapeMd(gammaOut);
 
-    const gammaOut = sanitize(gammaResult?.finalOutput);
-    if (gammaOut) {
+    const reasoningEscaped = escapeMd((evaluation?.reasoning || "").slice(0, 150));
+
+    const lines = [];
+    lines.push(`🏆 *Round Complete* · ${escapeMd(String(elapsedSec))}s`);
+    lines.push(`Objective: _${objShort}${objEllipsis}_`);
+    lines.push("");
+    lines.push(`Winner: *${winner}* \\(α:${alphaScoreStr} vs β:${betaScoreStr}\\)`);
+    if (reasoningEscaped) {
+      lines.push(`Why: ${reasoningEscaped}`);
+    }
+    lines.push("");
+
+    if (alphaOut) {
+      lines.push(`*Alpha* proposed:`);
+      lines.push(`\`${alphaEscaped}\``);
+    }
+    if (betaOut) {
+      lines.push(`*Beta* proposed:`);
+      lines.push(`\`${betaEscaped}\``);
+    }
+
+    const criticalLessons = (lessons || []).filter(l => l.severity === "critical");
+    if (criticalLessons.length > 0 || gammaOut) {
       lines.push("");
-      lines.push(`*Implementation:* ${gammaOut.slice(0, 350)}${gammaOut.length > 350 ? "..." : ""}`);
+    }
+
+    if (gammaOut) {
+      lines.push(`*Gamma* found:`);
+      lines.push(`_${gammaEscaped}_`);
     }
 
     if (mergeInfo?.changedFiles?.length > 0) {
-      lines.push(`Merged ${mergeInfo.changedFiles.length} files to main.`);
-    }
-
-    const criticalLessons = lessons.filter(l => l.severity === "critical");
-    const warningLessons = lessons.filter(l => l.severity === "warning");
-    if (criticalLessons.length > 0 || warningLessons.length > 0) {
       lines.push("");
-      lines.push(`*Lessons learned:*`);
-      for (const l of criticalLessons.slice(0, 3)) {
-        lines.push(`  [!] ${l.lesson.slice(0, 150)}`);
-      }
-      for (const l of warningLessons.slice(0, 2)) {
-        lines.push(`  [~] ${l.lesson.slice(0, 150)}`);
-      }
+      const fileCount = escapeMd(String(mergeInfo.changedFiles.length));
+      lines.push(`Changed: ${fileCount} files \\| ${escapeMd(String(elapsedSec))}s`);
     }
 
-    if (feedback) {
-      lines.push("");
-      lines.push(`*Feedback to ${loserTeam}:* ${feedback.feedbackToLoser.message.slice(0, 200)}`);
-    }
-
-    const leaderboard = this.store?.getLeaderboard?.() || [];
-    const scores = leaderboard.map(r => `${r.teamName || r.teamId}: ${r.score}`).join(" | ");
-    if (scores) {
-      lines.push("");
-      lines.push(`*Scores:* ${scores}`);
-    }
-
-    await this._notify(lines.join("\n"));
+    const text = lines.join("\n");
+    await this.telegramBot.sendFormatted({ text, chatId: this.chatId }).catch(() => {});
   }
 
   getStatus() {
@@ -662,5 +730,9 @@ Your task: Take the winning team's analysis/solution and implement it. If it inv
       phase: this.currentPhase,
       objective: this.currentObjective
     };
+  }
+
+  getGammaInsights() {
+    return this.gammaDiscoveries.slice(-3);
   }
 }
