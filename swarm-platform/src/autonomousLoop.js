@@ -33,17 +33,32 @@ function loadAutonomousState() {
   try {
     if (fs.existsSync(STATE_FILE)) {
       const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-      return { categoryIndex: s.categoryIndex || 0, templateIndexes: s.templateIndexes || {} };
+      return {
+        categoryIndex: s.categoryIndex || 0,
+        templateIndexes: s.templateIndexes || {},
+        roundsCompleted: s.roundsCompleted || 0,
+        roundsFailed: s.roundsFailed || 0,
+        objectivesDispatched: s.objectivesDispatched || 0
+      };
     }
   } catch { /* ignore */ }
-  return { categoryIndex: 0, templateIndexes: {} };
+  return { categoryIndex: 0, templateIndexes: {}, roundsCompleted: 0, roundsFailed: 0, objectivesDispatched: 0 };
 }
 
-function saveAutonomousState(categoryIndex, templateIndexes) {
+function saveAutonomousState(categoryIndex, templateIndexes, counters = {}) {
   try {
     const dir = path.dirname(STATE_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ categoryIndex, templateIndexes, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+    // Merge with existing state to preserve any fields we don't own
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { /* ignore */ }
+    fs.writeFileSync(STATE_FILE, JSON.stringify({
+      ...existing,
+      categoryIndex,
+      templateIndexes,
+      ...counters,
+      updatedAt: new Date().toISOString()
+    }, null, 2), 'utf8');
   } catch { /* ignore */ }
 }
 
@@ -362,10 +377,11 @@ export class AutonomousLoop {
     // Self-healing: track consecutive failures and failure patterns
     this.consecutiveFailures = 0;
     this.failureHistory = []; // rolling 10-entry history
-    // Autonomy metrics for /api/autonomy/status
-    this.roundsCompleted = 0;
-    this.roundsFailed = 0;
-    this.categoryHistory = []; // last 20 categories dispatched
+    // Autonomy metrics for /api/autonomy/status — loaded from persistent state
+    this.roundsCompleted = savedState.roundsCompleted || 0;
+    this.roundsFailed = savedState.roundsFailed || 0;
+    this.objectivesDispatched = savedState.objectivesDispatched || 0;
+    this.categoryHistory = []; // last 20 categories dispatched (in-memory only)
     this.modelSwapCount = 0;
     this.lastRoundTs = null;
     this.nextRoundEta = null;
@@ -517,8 +533,12 @@ export class AutonomousLoop {
           this.telegramBot.sendMessage(this.chatId, healthMsg).catch(() => {});
         }
 
-        // Save autonomous state after dispatching
-        saveAutonomousState(categoryIndex, templateIndexes);
+        // Save autonomous state after dispatching (persist cumulative counters)
+        saveAutonomousState(categoryIndex, templateIndexes, {
+          roundsCompleted: this.roundsCompleted,
+          roundsFailed: this.roundsFailed,
+          objectivesDispatched: this.objectivesDispatched
+        });
 
       } catch (err) {
         const errMsg = err?.stack || err?.message || String(err);
@@ -718,7 +738,11 @@ export class AutonomousLoop {
     }
     // Save state immediately after advancing categoryIndex — write-ahead so restarts
     // don't re-dispatch the same category if the server dies during the round.
-    saveAutonomousState(categoryIndex, templateIndexes);
+    saveAutonomousState(categoryIndex, templateIndexes, {
+      roundsCompleted: this.roundsCompleted,
+      roundsFailed: this.roundsFailed,
+      objectivesDispatched: this.objectivesDispatched
+    });
     // Track category history for autonomy status endpoint
     this.categoryHistory.push({ category: category.category, ts: Date.now() });
     if (this.categoryHistory.length > 20) this.categoryHistory.shift();

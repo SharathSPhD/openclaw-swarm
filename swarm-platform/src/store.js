@@ -166,7 +166,8 @@ export class Store {
       "swarm.session.failed", "swarm.session.decomposed", "swarm.session.executing",
       "swarm.session.reviewing", "swarm.session.aggregating",
       "competitive.started", "competitive.forked", "competitive.evaluated",
-      "competitive.implementing", "competitive.merged", "competitive.restarting"
+      "competitive.implementing", "competitive.merged", "competitive.restarting",
+      "competitive.quality-gate-failed", "objective.failed", "objective.completed"
     ]);
     const events = this.getEvents(this.maxEvents).filter((e) => trackedTypes.has(e.type));
 
@@ -190,7 +191,7 @@ export class Store {
       current.updatedAt = e.ts;
       current.steps.push({ ts: e.ts, type: e.type, source: e.source, summary: e.payload?.summary || e.payload?.task || "" });
       if (e.type === "orchestrator.autonomous.end" || e.type === "swarm.session.completed" || e.type === "competitive.merged") current.status = "completed";
-      if (e.type === "swarm.session.failed") current.status = "failed";
+      if (e.type === "swarm.session.failed" || e.type === "objective.failed" || e.type === "competitive.quality-gate-failed") current.status = "failed";
       if (e.type === "competitive.evaluated") current.winner = e.payload?.winner;
 
       objectives.set(objectiveId, current);

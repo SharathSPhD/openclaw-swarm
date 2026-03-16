@@ -65,14 +65,12 @@ export class CompetitiveCoordinator {
 
   async _safeTelegramSend(text) {
     if (!this.telegramBot || !this.chatId) return;
-    try {
-      await this.telegramBot.sendMessage(this.chatId, text, "MarkdownV2");
-    } catch (err) {
-      // MarkdownV2 failed, try plain text fallback
-      try {
-        const plain = text.replace(/[\\*_`\[\]()~>#+=|{}.!\-]/g, '').replace(/\n\n+/g, '\n');
-        await this.telegramBot.sendMessage(this.chatId, plain.slice(0, 4000), "Markdown");
-      } catch { /* silent */ }
+    const result = await this.telegramBot.sendMessage(this.chatId, text, "MarkdownV2");
+    if (result?.ok === false) {
+      // MarkdownV2 rejected — strip formatting and retry as plain Markdown
+      console.warn("[competitive] MarkdownV2 send failed, retrying as plain text. Error:", result?.description || result?.error);
+      const plain = text.replace(/[\\*_`\[\]()~>#+=|{}.!\-]/g, '').replace(/\n\n+/g, '\n');
+      await this.telegramBot.sendMessage(this.chatId, plain.slice(0, 4000), "Markdown");
     }
   }
 
