@@ -35,7 +35,21 @@ const VALID_TYPES = new Set([
   "swarm.session.aggregating",
   "swarm.session.completed",
   "swarm.session.failed",
-  "system.state"
+  "system.state",
+  // Competitive round lifecycle
+  "competitive.started",
+  "competitive.forked",
+  "competitive.evaluated",
+  "competitive.implementing",
+  "competitive.merged",
+  "competitive.restarting",
+  "competitive.quality-gate-failed",
+  // Agent communication
+  "agent.message",
+  "agent.handoff",
+  // Objective performance
+  "objective.completed",
+  "objective.failed"
 ]);
 
 export function createEvent({ type, teamId, payload = {}, source = "platform" }) {
