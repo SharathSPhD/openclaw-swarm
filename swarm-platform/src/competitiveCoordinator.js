@@ -64,7 +64,11 @@ export class CompetitiveCoordinator {
   }
 
   async _safeTelegramSend(text) {
-    if (!this.telegramBot || !this.chatId) return;
+    if (!this.telegramBot || !this.chatId) {
+      console.warn("[competitive] Telegram skip: bot=" + !!this.telegramBot + " chatId=" + !!this.chatId);
+      return;
+    }
+    console.log("[competitive] Sending Telegram message (" + text.length + " chars)...");
     const result = await this.telegramBot.sendMessage(this.chatId, text, "MarkdownV2");
     if (result?.ok === false) {
       // MarkdownV2 rejected — strip formatting and retry as plain Markdown
