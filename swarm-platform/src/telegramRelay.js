@@ -46,4 +46,85 @@ export class TelegramRelay {
 
     return { ok: false, reason: "telegram_send_failed" };
   }
+
+  async sendSwarmSummary({ store, roundResult, objectiveText, chatId }) {
+    try {
+      if (!store) {
+        return { ok: false, reason: "store_not_provided" };
+      }
+
+      const target = chatId || this.defaultChatId;
+      if (!this.botToken || !target) {
+        return { ok: false, reason: "telegram_not_configured" };
+      }
+
+      // Get leaderboard for current scores
+      const leaderboard = store.getLeaderboard?.() || [];
+      
+      // Build summary message
+      const lines = [];
+      lines.push("🏆 *Swarm Round Complete*");
+      lines.push("");
+
+      // Objective summary (first 100 chars)
+      if (objectiveText) {
+        const objectivePreview = objectiveText.length > 100 
+          ? objectiveText.slice(0, 100) + "..." 
+          : objectiveText;
+        lines.push(`📋 *Objective:* ${objectivePreview}`);
+        lines.push("");
+      }
+
+      // Winner info
+      if (roundResult?.winner) {
+        const winnerName = (roundResult.winner || "").replace("team-", "Team ").replace(/-/g, " ");
+        const scoreDelta = roundResult.scoreDelta ?? "N/A";
+        lines.push(`🥇 *Winner:* ${winnerName} (delta: +${scoreDelta})`);
+        lines.push("");
+      }
+
+      // Leaderboard
+      if (leaderboard && leaderboard.length > 0) {
+        lines.push("📊 *Leaderboard:*");
+        for (const entry of leaderboard.slice(0, 4)) {
+          const name = (entry.teamName || entry.teamId || "Unknown").replace("Team ", "");
+          const score = entry.score ?? "N/A";
+          const completed = entry.completed ?? "N/A";
+          const accuracy = entry.accuracy ? `${Math.round(entry.accuracy * 100)}%` : "N/A";
+          
+          const scoreStr = typeof score === "number" ? score.toLocaleString() : score;
+          lines.push(`  ${name}: ${scoreStr} pts | ${completed} done | ${accuracy} acc`);
+        }
+        lines.push("");
+      }
+
+      // Metrics
+      const metrics = [];
+      if (roundResult?.avgLatency) {
+        const latencySec = Math.round(roundResult.avgLatency / 1000);
+        metrics.push(`⚡ Latency: ${latencySec}s`);
+      }
+      if (roundResult?.criticApprovalRate !== undefined) {
+        const approvalPct = Math.round(roundResult.criticApprovalRate * 100);
+        metrics.push(`🎯 Critic approval: ${approvalPct}%`);
+      }
+      if (metrics.length > 0) {
+        lines.push(metrics.join(" | "));
+      }
+
+      const text = lines.join("\n");
+
+      // Check message length (Telegram limit is 4096, we keep well under)
+      if (text.length > 4000) {
+        // If too long, truncate gracefully
+        const truncated = text.slice(0, 3900) + "\n...[truncated]";
+        return this.send({ text: truncated, chatId: target });
+      }
+
+      return this.send({ text, chatId: target });
+    } catch (err) {
+      console.error("[telegramRelay] sendSwarmSummary error:", err?.message);
+      return { ok: false, reason: "summary_composition_failed", error: err?.message };
+    }
+  }
 }

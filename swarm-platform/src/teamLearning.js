@@ -12,6 +12,9 @@ export class TeamLearning {
     this.store = store;
     this.lessons = new Map();
     this.roundHistory = [];
+    // In-memory stores for file-based mode (max 500 and 200 entries respectively)
+    this.performanceRecords = [];
+    this.lessonRecords = [];
   }
 
   async init() {
@@ -51,6 +54,33 @@ export class TeamLearning {
   }
 
   async recordTaskOutcome({ teamId, model, role, success, errorType, latencyMs, correctness, outputLength, roundId }) {
+    // Always record to in-memory store (rolling window of 500 entries)
+    const record = {
+      teamId,
+      model: model || "unknown",
+      role,
+      success,
+      errorType: errorType || null,
+      latencyMs: latencyMs || null,
+      correctness: correctness || null,
+      outputLength: outputLength || 0,
+      roundId: roundId || null,
+      createdAt: new Date().toISOString()
+    };
+    this.performanceRecords.push(record);
+    if (this.performanceRecords.length > 500) {
+      this.performanceRecords.shift(); // Keep rolling window of 500
+    }
+
+    // Also update roundHistory if we have a roundId
+    if (roundId) {
+      const roundEntry = this.roundHistory.find(r => r.roundId === roundId);
+      if (roundEntry) {
+        // We'll let analyzeRound() handle full details; just track that outcome occurred
+      }
+    }
+
+    // If DB available, also persist to PostgreSQL
     if (!this.db?.pool) return;
     try {
       await this.db.pool.query(
@@ -59,20 +89,38 @@ export class TeamLearning {
         [teamId, model || "unknown", role, success, errorType || null, latencyMs || null, correctness || null, outputLength || 0, roundId || null]
       );
     } catch (err) {
-      console.warn("[teamLearning] recordTaskOutcome:", err?.message);
+      console.warn("[teamLearning] recordTaskOutcome (DB):", err?.message);
     }
   }
 
   async recordLesson({ teamId, roundId, category, lesson, model, role, severity }) {
-    if (!this.db?.pool) return;
-    try {
-      await this.db.pool.query(
-        `INSERT INTO team_lessons (team_id, round_id, category, lesson, model, role, severity)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [teamId, roundId, category, lesson, model || null, role || null, severity || "info"]
-      );
-    } catch (err) {
-      console.warn("[teamLearning] recordLesson:", err?.message);
+    // Always record to in-memory store (rolling window of 200 entries)
+    const record = {
+      teamId,
+      roundId,
+      category,
+      lesson,
+      model: model || null,
+      role: role || null,
+      severity: severity || "info",
+      createdAt: new Date().toISOString()
+    };
+    this.lessonRecords.push(record);
+    if (this.lessonRecords.length > 200) {
+      this.lessonRecords.shift(); // Keep rolling window of 200
+    }
+
+    // If DB available, also persist to PostgreSQL
+    if (this.db?.pool) {
+      try {
+        await this.db.pool.query(
+          `INSERT INTO team_lessons (team_id, round_id, category, lesson, model, role, severity)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [teamId, roundId, category, lesson, model || null, role || null, severity || "info"]
+        );
+      } catch (err) {
+        console.warn("[teamLearning] recordLesson (DB):", err?.message);
+      }
     }
   }
 
@@ -226,8 +274,88 @@ export class TeamLearning {
   }
 
   async getModelRecommendations(teamId) {
-    if (!this.db?.pool) return { avoidModels: [], preferModels: [], roleOverrides: {} };
+    // In file-based mode, compute from in-memory performanceRecords
+    if (!this.db?.pool) {
+      const avoidModels = [];
+      const preferModels = [];
+      const roleOverrides = {};
 
+      // Filter records for this team and recent (24 hours)
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const recentRecords = this.performanceRecords.filter(
+        r => r.teamId === teamId && new Date(r.createdAt) > cutoff
+      );
+
+      // Group by (model, role)
+      const stats = new Map();
+      for (const record of recentRecords) {
+        const key = `${record.model}:${record.role}`;
+        const stat = stats.get(key) || {
+          model: record.model,
+          role: record.role,
+          total: 0,
+          successes: 0,
+          failures: 0,
+          latencies: [],
+          correctnesses: []
+        };
+        stat.total += 1;
+        if (record.success) {
+          stat.successes += 1;
+          if (record.latencyMs) stat.latencies.push(record.latencyMs);
+          if (record.correctness !== null) stat.correctnesses.push(record.correctness);
+        } else {
+          stat.failures += 1;
+        }
+        stats.set(key, stat);
+      }
+
+      // Analyze and build recommendations
+      for (const stat of stats.values()) {
+        const failRate = stat.total > 0 ? stat.failures / stat.total : 0;
+
+        if (failRate > 0.5 && stat.total >= 2) {
+          avoidModels.push({
+            model: stat.model,
+            role: stat.role,
+            failRate: Number(failRate.toFixed(2)),
+            reason: `${stat.failures}/${stat.total} failures`
+          });
+        }
+
+        const avgCorrectness = stat.correctnesses.length > 0
+          ? stat.correctnesses.reduce((a, b) => a + b, 0) / stat.correctnesses.length
+          : 0;
+        const avgLatency = stat.latencies.length > 0
+          ? stat.latencies.reduce((a, b) => a + b, 0) / stat.latencies.length
+          : 0;
+
+        if (failRate === 0 && stat.total >= 2 && avgCorrectness > 0.8) {
+          preferModels.push({
+            model: stat.model,
+            role: stat.role,
+            avgCorrectness: Number(avgCorrectness.toFixed(2)),
+            avgLatency: Math.round(avgLatency)
+          });
+        }
+      }
+
+      // Build role overrides
+      for (const avoid of avoidModels) {
+        const better = preferModels.find(p => p.role === avoid.role);
+        if (better) {
+          roleOverrides[avoid.role] = {
+            avoid: avoid.model,
+            prefer: better.model,
+            reason: `${avoid.model} has ${avoid.reason}; ${better.model} has ${(better.avgCorrectness * 100).toFixed(0)}% correctness`
+          };
+        }
+      }
+
+      return { avoidModels, preferModels, roleOverrides };
+    }
+
+    // PostgreSQL mode
     try {
       const perf = await this.db.pool.query(
         `SELECT model, role, 
@@ -278,7 +406,15 @@ export class TeamLearning {
   }
 
   async getRecentLessons(teamId, limit = 20) {
-    if (!this.db?.pool) return [];
+    // In file-based mode, return from in-memory store
+    if (!this.db?.pool) {
+      return this.lessonRecords
+        .filter(l => l.teamId === teamId)
+        .slice(-limit)
+        .reverse(); // Most recent first
+    }
+
+    // PostgreSQL mode
     try {
       const res = await this.db.pool.query(
         `SELECT * FROM team_lessons WHERE team_id = $1 ORDER BY created_at DESC LIMIT $2`,

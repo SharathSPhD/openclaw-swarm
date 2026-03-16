@@ -2,44 +2,77 @@ const META_OBJECTIVE_CATEGORIES = [
   {
     category: "performance",
     generator: (stats) => {
-      if (stats.avgLatency > 30000) {
-        return "Analyze the latency of the last 10 completed tasks in our swarm platform. Identify the slowest model-role pair and recommend a faster alternative model from our available Ollama models. Provide specific latency data and expected improvement.";
+      if (stats.avgLatency > 60000) {
+        return `Task latency is critically high at ${Math.round(stats.avgLatency / 1000)}s average. Investigate: which Ollama models are slowest to respond on this DGX Spark hardware, whether model loading/unloading is causing spikes, and whether role-model assignments are suboptimal. Recommend specific model swaps (e.g., replace qwen2.5:7b with phi3:mini for research tasks). Include expected latency improvement for each change.`;
       }
-      return "Review the current task execution performance metrics. Report average completion times by role (research, build, critic, integrator). Identify any bottlenecks and suggest optimizations for our multi-agent orchestration pipeline.";
+      if (stats.avgLatency > 30000) {
+        return `Average task latency is ${Math.round(stats.avgLatency / 1000)}s. Identify the top 3 latency contributors. For each: is it model load time, inference time, or orchestration overhead? Propose targeted optimizations. Consider model pre-warming strategies for frequently used roles.`;
+      }
+      return `Latency is healthy at ${Math.round(stats.avgLatency / 1000)}s. Now focus on throughput: how can we safely increase concurrent objective dispatch? Analyze the queue depth patterns, GPU memory headroom, and suggest a safe maxConcurrentObjectives value above the current 1.`;
     }
   },
   {
     category: "quality",
     generator: (stats) => {
-      if (stats.criticApprovalRate < 0.7) {
-        return "The critic rejection rate is high. Analyze the most common reasons for rejection in our swarm tasks. Propose specific prompt improvements for the most-rejected specialist role to improve first-pass approval rates.";
+      if (stats.criticApprovalRate < 0.6) {
+        return `Critic rejection rate is very high (only ${Math.round(stats.criticApprovalRate * 100)}% approval). This wastes GPU cycles on rewrites. Deep-dive on what the critic is consistently rejecting: is it incomplete answers, wrong format, hallucinations, or missing code examples? Write a concrete prompt template for the BUILD role that pre-empts the 3 most common rejection reasons.`;
       }
-      return "Review the quality of completed objectives. Assess correctness scores, efficiency ratings, and output completeness. Identify patterns in high-quality vs low-quality outputs and recommend improvements.";
+      if (stats.criticApprovalRate < 0.8) {
+        return `Critic approval rate is ${Math.round(stats.criticApprovalRate * 100)}%. The gap between RESEARCH and BUILD agent output quality is likely the cause. Design a structured output format for BUILD agents that includes: summary, implementation code, verification steps, and known limitations. This reduces revision cycles.`;
+      }
+      return `Quality metrics look good (${Math.round(stats.criticApprovalRate * 100)}% critic approval). Now focus on output depth: design a self-critique checklist that BUILD and INTEGRATOR agents should run through before submitting. Include: completeness, correctness, edge cases covered, and actionability of the output.`;
     }
   },
   {
     category: "coverage",
-    generator: () => "Research what capabilities the swarm platform is currently missing compared to a full multi-agent AI system. Consider: error recovery strategies, inter-agent communication patterns, context sharing between sub-tasks, and progressive refinement. List the top 3 most impactful gaps with implementation suggestions."
+    generator: (stats) => {
+      const completionRate = stats.completed / Math.max(stats.completed + (stats.failed || 0), 1);
+      if (completionRate < 0.7) {
+        return `Task failure rate is high (${Math.round((1 - completionRate) * 100)}% fail rate). Categorize failure modes: timeout, model refusal, JSON parse error, tool failure, or logical errors. For each category, design a specific recovery strategy. Focus on the most common failure type first.`;
+      }
+      return "Design a capability expansion roadmap for the swarm. Identify 3 domains where the swarm is currently weakest based on objective history. For each domain, specify: what skills are needed, which model handles it best, and what new objective templates would exercise those skills. Make recommendations actionable within 1 week.";
+    }
   },
   {
     category: "documentation",
-    generator: (stats) => `Generate a comprehensive status report of the swarm platform. Include: total completed objectives (${stats.completed}), team scores (Alpha: ${stats.alphaScore}, Beta: ${stats.betaScore}, Gamma: ${stats.gammaScore}), average task latency, model utilization breakdown, and recommendations for the next 24 hours of autonomous operation.`
+    generator: (stats) => `Write a living architecture document for the OpenClaw Swarm Platform based on what you observe. Include: current competitive team structure (Alpha vs Beta, Gamma implements winner), the complete event flow from dispatch to score update, and the adaptive scheduling algorithm. Score snapshot: Alpha=${stats.alphaScore}, Beta=${stats.betaScore}, Gamma=${stats.gammaScore}. Identify 2 architectural risks and propose mitigations.`
   },
   {
     category: "system_health",
-    generator: () => "Analyze the system health of our swarm platform running on DGX Spark. Check GPU memory usage patterns, model loading/unloading frequency, and identify any models that consistently cause OOM errors. Report current resource utilization and recommend optimal model concurrency limits."
+    generator: () => "Perform a comprehensive health assessment of the DGX Spark-hosted swarm. Investigate: (1) current GPU utilization vs available VRAM, (2) which Ollama models are loaded vs cold, (3) any recent OOM events in system logs, (4) whether the 13 available models are optimally distributed across roles. Produce a VRAM budget table showing each loaded model's footprint."
   },
   {
     category: "testing",
-    generator: () => "Design a comprehensive test plan for the swarm platform's coordinator-specialist pattern. Include tests for: task decomposition quality, dependency graph correctness, critic review accuracy, aggregation completeness, and error recovery. Provide specific test scenarios with expected outcomes."
+    generator: () => "Design and write 5 specific integration test scenarios for the competitive coordinator pipeline. Each test should: specify input objective text, expected coordinator decomposition, expected per-role outputs, and scoring assertions. Focus on edge cases: empty objectives, single-role tasks, coordinator decomposition with 5+ subtasks, and tasks requiring tool use. Provide executable test code in Node.js using node:test."
+  },
+  {
+    category: "strategy",
+    generator: (stats) => {
+      const leadScore = Math.max(stats.alphaScore, stats.betaScore);
+      const lagScore = Math.min(stats.alphaScore, stats.betaScore);
+      const gap = leadScore - lagScore;
+      if (gap > 5000) {
+        return `One team has a ${gap}-point lead. Analyze: what is the leading team doing differently? Are there systematic prompt differences, model advantages, or task type biases? Design 3 specific interventions that could help the lagging team close the gap without simply copying the leader. Diversity of approach is valuable.`;
+      }
+      return `Teams are closely matched (gap: ${gap} pts). To break the tie, design a high-stakes "breakthrough objective" — a complex, multi-step task that requires creative synthesis across all 4 agent roles. The team with better orchestration and model utilization should win. Provide the objective text and scoring rubric.`;
+    }
+  },
+  {
+    category: "knowledge_synthesis",
+    generator: (stats) => `The swarm has completed ${stats.completed} objectives. Extract the most valuable insights from this body of work. What patterns have emerged? What does the swarm know about its own capabilities? Write a "lessons learned" memo covering: (1) most effective prompt patterns discovered, (2) model-role combinations that produced best results, (3) objective types that consistently fail and why, (4) 3 concrete improvements to implement this week.`
+  },
+  {
+    category: "innovation",
+    generator: () => "Propose a novel enhancement to the OpenClaw Swarm Platform that doesn't currently exist. Consider: multi-round debate between Alpha and Beta before Gamma implements, cross-objective context sharing (results from one objective inform the next), agent specialization evolution (roles that adapt based on performance history), or meta-learning where the program lead writes new objective templates based on team feedback. Design the most impactful enhancement with full implementation details."
   }
 ];
 
 export class AutonomousLoop {
-  constructor({ competitiveCoordinator, coordinator, telegramBot, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController }) {
+  constructor({ competitiveCoordinator, coordinator, telegramBot, telegramRelay, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController }) {
     this.competitiveCoordinator = competitiveCoordinator;
     this.coordinator = coordinator;
     this.telegramBot = telegramBot;
+    this.telegramRelay = telegramRelay;
     this.store = store;
     this.db = db;
     this.chatId = chatId;
@@ -127,6 +160,23 @@ export class AutonomousLoop {
           result = await this.coordinator.executeObjective({ teamId: "team-delta", objective, objectiveId, maxIterations: 2 });
         } else if (this.competitiveCoordinator) {
           result = await this.competitiveCoordinator.executeCompetitiveObjective({ objective, objectiveId, category });
+          // Send Telegram summary for competitive round
+          if (result.status === "completed" && this.telegramRelay && this.chatId) {
+            const roundResult = {
+              winner: result.winner,
+              scoreDelta: (result.evaluation?.alphaScore ?? 0) + (result.evaluation?.betaScore ?? 0),
+              avgLatency: this._gatherStats().avgLatency,
+              criticApprovalRate: this._gatherStats().criticApprovalRate
+            };
+            await this.telegramRelay.sendSwarmSummary({
+              store: this.store,
+              roundResult,
+              objectiveText: objective,
+              chatId: this.chatId
+            }).catch((err) => {
+              console.warn("[autonomousLoop] sendSwarmSummary failed:", err?.message);
+            });
+          }
         } else {
           result = await this.coordinator.executeObjective({ teamId: "team-alpha", objective, objectiveId, maxIterations: 2 });
         }

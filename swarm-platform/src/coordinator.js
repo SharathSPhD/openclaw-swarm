@@ -265,7 +265,7 @@ Objective: ${objective}`;
             : subTask.description;
           let taskPrompt = feedbackPrefix + baseTask;
           if (this.explorationEngine) {
-            const toolContext = buildToolContext(this.explorationEngine);
+            const toolContext = buildToolContext(this.explorationEngine, subTask.role);
             if (toolContext) {
               taskPrompt = buildToolAwarePrompt({ role: subTask.role, taskText: feedbackPrefix + baseTask, toolContext, codebaseHint: "" });
             }

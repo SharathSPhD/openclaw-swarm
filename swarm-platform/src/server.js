@@ -34,6 +34,7 @@ import { registerModelRoutes } from "./routes/models.js";
 import { registerOpsRoutes } from "./routes/ops.js";
 import { registerAutonomyRoutes } from "./routes/autonomy.js";
 
+import { createMetricsRouter } from './routes/metrics.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..");
@@ -1146,6 +1147,9 @@ registerOpsRoutes(app, {
 });
 
 
+// Register metrics endpoints (GPU, latency, throughput)
+app.use("/api/metrics", createMetricsRouter({ store, queueManager: queue, modelCatalog: { discoverLocalModels, loadModelRouting, readModelLatency } }));
+
 
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "not_found" });
@@ -1311,6 +1315,7 @@ async function startAutonomousLoop() {
     competitiveCoordinator: competitiveCoord,
     coordinator,
     telegramBot,
+    telegramRelay,
     store,
     db,
     chatId: cfg.telegramDefaultChatId,

@@ -96,7 +96,7 @@ function runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, 
   const codebaseHint = worktreePath
     ? `\nThe project codebase is available at: ${worktreePath}\nYour working directory is set to the team worktree. Make changes there.`
     : "\nThe project codebase is available at /codebase/swarm-platform/ inside the sandbox.";
-  const toolContext = buildToolContext(explorationEngine);
+  const toolContext = buildToolContext(explorationEngine, role);
   const prompt = buildToolAwarePrompt({ role, taskText: `task ${taskId}: ${taskText}`, toolContext, codebaseHint });
   const agentId = agent || ROLE_TO_AGENT[role] || "main";
   const args = ["agent", "--agent", agentId, "--message", prompt, "--json"];
