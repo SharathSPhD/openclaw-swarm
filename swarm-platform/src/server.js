@@ -27,12 +27,16 @@ import { WorktreeManager } from "./worktreeManager.js";
 import { TeamLearning } from "./teamLearning.js";
 import { ExplorationEngine } from "./explorationEngine.js";
 import { ObjectivePerformanceTracker } from "./objectivePerformance.js";
+import { AgentMemory } from "./agentMemory.js";
 import { registerCompetitiveRoutes } from "./routes/competitive.js";
 import { registerLearningRoutes } from "./routes/learning.js";
 import { registerExplorationRoutes } from "./routes/exploration.js";
 import { registerModelRoutes } from "./routes/models.js";
 import { registerOpsRoutes } from "./routes/ops.js";
 import { registerAutonomyRoutes } from "./routes/autonomy.js";
+import { registerAgentRoutes } from \"./routes/agents.js\";
+import { ResourceRequests } from \"./resourceRequests.js\";
+import { registerRequestRoutes } from \"./routes/requests.js\";
 
 import { createMetricsRouter } from './routes/metrics.js';
 const __filename = fileURLToPath(import.meta.url);
@@ -83,6 +87,7 @@ const db = new DB(cfg.dbUrl);
 const eventProcessor = new EventProcessor(null, db);
 const store = new Store(cfg.retention, db, eventProcessor);
 eventProcessor.store = store;
+const agentMemory = new AgentMemory({ dataDir: path.join(root, "data") });
 
 const policyEngine = new PolicyEngine();
 const queue = new QueueManager();
@@ -1247,6 +1252,10 @@ registerExplorationRoutes(app, {
   get explorationEngineInstance() { return explorationEngineInstance; }
 });
 
+
+registerAgentRoutes(app, {
+  agentMemory
+});
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "not_found" });
   const indexPath = path.join(root, "ui", "dist", "index.html");

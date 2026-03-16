@@ -11,13 +11,15 @@ import OpsPage from "./pages/OpsPage";
 import AuditPage from "./pages/AuditPage";
 import TelegramPage from "./pages/TelegramPage";
 import LeaderboardPage from "./pages/LeaderboardPage";
-import ConfigPage from "./pages/ConfigPage";
+import ConfigPage from \"./pages/ConfigPage\";
+import RequestsPage from \"./pages/RequestsPage\";
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: "📊" },
   { to: "/competition", label: "Competition", icon: "⚔️" },
-  { to: "/agents", label: "Agents", icon: "🤖" },
-  { to: "/config", label: "Config", icon: "⚙️" },
+  { to: \"/agents\", label: \"Agents\", icon: \"🤖\" },
+  { to: \"/requests\", label: \"Requests\", icon: \"🔑\" },
+  { to: \"/config\", label: \"Config\", icon: \"⚙️\" },
 ];
 
 export default function App() {
@@ -115,8 +117,9 @@ export default function App() {
             <Route path="/objectives" element={<ObjectivesPage />} />
             <Route path="/timeline" element={<TimelinePage />} />
             <Route path="/ops" element={<OpsPage snapshot={snapshot} />} />
-            <Route path="/audit" element={<AuditPage />} />
-            <Route path="/telegram" element={<TelegramPage />} />
+            <Route path=\"/audit\" element={<AuditPage />} />
+            <Route path=\"/requests\" element={<RequestsPage />} />
+            <Route path=\"/telegram\" element={<TelegramPage />} />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
             <Route path="/config" element={<ConfigPage />} />
           </Routes>

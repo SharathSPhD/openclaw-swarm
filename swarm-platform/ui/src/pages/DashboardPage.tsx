@@ -651,21 +651,45 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
           <AgentCommunicationTrace />
         </div>
         <div className="panel">
-          <h3 className="text-sm font-semibold mb-3">Team Leaderboard</h3>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {agents.length > 0 ? (
-              <div className="text-xs space-y-1">
-                {agents.slice(0, 10).map((a) => (
-                  <div key={a.taskId} className="flex items-center justify-between pb-1 border-b border-swarm-border/30">
-                    <span className="text-swarm-muted">{a.teamId}</span>
-                    <span className="chip chip-normal text-[10px]">{a.role}</span>
-                  </div>
-                ))}
+          <h3 className="text-sm font-semibold mb-3">Competition Scores</h3>
+          {(() => {
+            const lb = snapshot?.leaderboard || [];
+            const competing = lb.filter(t => ["team-alpha", "team-beta"].includes(t.teamId || t.teamName));
+            if (competing.length === 0) return <p className="text-swarm-muted text-xs">No scores yet</p>;
+            const sorted = [...competing].sort((a, b) => b.score - a.score);
+            return (
+              <div className="space-y-3">
+                {sorted.map((t, i) => {
+                  const name = t.teamName || t.teamId || "?";
+                  const total = t.completed + (t.failed || 0);
+                  const winRate = total > 0 ? Math.round((t.completed / total) * 100) : 0;
+                  const models = t.modelUsage ? Object.entries(t.modelUsage).filter(([m]) => m !== "unknown").sort(([,a],[,b]) => (b as number) - (a as number)).slice(0, 3) : [];
+                  return (
+                    <div key={name} className={`p-3 rounded-lg border ${i === 0 ? "border-amber-500/50 bg-amber-900/10" : "border-swarm-border bg-swarm-bg"}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-sm">{i === 0 ? "🏆 " : ""}{name}</span>
+                        <span className="font-mono text-lg font-bold text-swarm-accent">{t.score.toLocaleString()}</span>
+                      </div>
+                      <div className="flex gap-3 text-[11px] text-swarm-muted">
+                        <span>Win: {winRate}%</span>
+                        <span className="text-emerald-400">{t.completed} done</span>
+                        <span className="text-red-400">{t.failed || 0} fail</span>
+                        <span>{t.penalties} pen</span>
+                        <span className="text-green-400">{t.rewards || 0} rew</span>
+                      </div>
+                      {models.length > 0 && (
+                        <div className="flex gap-1 mt-1 flex-wrap">
+                          {models.map(([m, c]) => (
+                            <span key={m} className="font-mono text-[10px] px-1 rounded bg-gray-800 text-gray-400">{m}×{String(c)}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            ) : (
-              <p className="text-swarm-muted text-xs">No active agents</p>
-            )}
-          </div>
+            );
+          })()}
         </div>
       </div>
 

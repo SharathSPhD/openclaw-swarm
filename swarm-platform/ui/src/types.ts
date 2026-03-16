@@ -34,6 +34,7 @@ export interface TeamInfo {
 
 export interface LeaderboardRow {
   rank: number;
+  teamId?: string;
   teamName: string;
   score: number;
   accuracy: number;
@@ -42,6 +43,8 @@ export interface LeaderboardRow {
   penalties: number;
   rewards?: number;
   modelUsage?: Record<string, number>;
+  byRole?: Record<string, number>;
+  byAgent?: Record<string, number>;
   avgLatency?: number;
   toolUsage?: number;
   criticApprovalRate?: number;

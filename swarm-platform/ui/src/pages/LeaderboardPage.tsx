@@ -8,7 +8,10 @@ interface LeaderboardResponse {
 
 export default function LeaderboardPage() {
   const { data } = useApi<LeaderboardResponse>("/api/leaderboard", 5000);
-  const leaderboard = data?.leaderboard ?? [];
+  const allTeams = data?.leaderboard ?? [];
+  const competingTeams = allTeams.filter(t => ["team-alpha", "team-beta"].includes(t.teamId || t.teamName));
+  const supportTeams = allTeams.filter(t => !["team-alpha", "team-beta"].includes(t.teamId || t.teamName));
+  const leaderboard = competingTeams;
 
   const chartData = leaderboard.map((r) => ({
     name: r.teamName,
@@ -89,25 +92,47 @@ export default function LeaderboardPage() {
 
       {leaderboard.map((row) => (
         <div key={row.teamName} className="panel">
-          <h3 className="text-sm font-semibold mb-3">{row.teamName} — Model Usage</h3>
-          <div className="flex flex-wrap gap-2">
-            {row.modelUsage && Object.keys(row.modelUsage).length > 0 ? (
-              Object.entries(row.modelUsage).map(([model, count]) => (
-                <span key={model} className="chip chip-normal text-xs">
-                  {model}: {count}
-                </span>
-              ))
-            ) : (
-              <span className="text-swarm-muted text-xs">No model usage data</span>
-            )}
+          <h3 className="text-sm font-semibold mb-3">{row.teamName} — Model Usage & Performance</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <h4 className="text-xs font-semibold text-swarm-muted mb-2">Models Called</h4>
+              <div className="flex flex-wrap gap-2">
+                {row.modelUsage && Object.keys(row.modelUsage).length > 0 ? (
+                  Object.entries(row.modelUsage)
+                    .filter(([m]) => m !== "unknown")
+                    .sort(([, a], [, b]) => (b as number) - (a as number))
+                    .map(([model, count]) => (
+                      <span key={model} className="font-mono text-[11px] px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-900/50">
+                        {model}: {String(count)}
+                      </span>
+                    ))
+                ) : (
+                  <span className="text-swarm-muted text-xs">No model usage data</span>
+                )}
+              </div>
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold text-swarm-muted mb-2">Agent Roles</h4>
+              <div className="flex flex-wrap gap-2">
+                {row.byRole && Object.keys(row.byRole).length > 0 ? (
+                  Object.entries(row.byRole).map(([role, count]) => (
+                    <span key={role} className="font-mono text-[11px] px-2 py-0.5 rounded bg-purple-900/30 text-purple-400 border border-purple-900/50">
+                      {role}: {String(count)}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-swarm-muted text-xs">No role data</span>
+                )}
+              </div>
+            </div>
           </div>
           {row.recentObjectives && row.recentObjectives.length > 0 && (
             <div className="mt-3">
               <h4 className="text-xs font-semibold text-swarm-muted mb-1">Recent Objectives</h4>
               <div className="flex flex-wrap gap-2">
                 {row.recentObjectives.map((obj, i) => (
-                  <span key={i} className={`chip text-xs ${obj.status === "completed" ? "chip-normal" : "chip-critical"}`}>
-                    {obj.id?.slice(0, 16)} ({obj.status})
+                  <span key={i} className={`font-mono text-[11px] px-2 py-0.5 rounded border ${obj.status === "completed" ? "bg-emerald-900/20 text-emerald-400 border-emerald-900/50" : "bg-red-900/20 text-red-400 border-red-900/50"}`}>
+                    {obj.id?.slice(0, 20)} ({obj.status})
                   </span>
                 ))}
               </div>
@@ -115,6 +140,24 @@ export default function LeaderboardPage() {
           )}
         </div>
       ))}
+
+      {/* Support Teams (non-competing) */}
+      {supportTeams.length > 0 && (
+        <div className="panel mt-4">
+          <h3 className="text-sm font-semibold mb-3 text-gray-400">Support Teams (non-competing)</h3>
+          <div className="space-y-2">
+            {supportTeams.map((row) => (
+              <div key={row.teamName} className="flex items-center justify-between py-1 border-b border-swarm-border/30">
+                <span className="text-gray-400">{row.teamName}</span>
+                <span className="text-xs text-swarm-muted">
+                  {row.teamName.includes("gamma") ? "Implements winning solutions" : "Supports program lead"}
+                  {" · "}Tasks: {row.completed + (row.failed ?? 0)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

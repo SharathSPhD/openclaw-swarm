@@ -20,7 +20,8 @@ export class CompetitiveCoordinator {
     telegramBot,
     chatId,
     teamLearning,
-    objectivePerformanceTracker
+    objectivePerformanceTracker,
+    agentMemory
   }) {
     this.runTask = runTask;
     this.emitEvent = emitEvent;
@@ -35,6 +36,7 @@ export class CompetitiveCoordinator {
     this.chatId = chatId;
     this.teamLearning = teamLearning;
     this.objectivePerformanceTracker = objectivePerformanceTracker || null;
+    this.agentMemory = agentMemory || null;
 
     this.alphaCoordinator = new SwarmCoordinator({
       runTask, emitEvent, createEvent, store, db,
@@ -146,7 +148,21 @@ export class CompetitiveCoordinator {
         }
       }
 
-      const [alphaResult, betaResult] = await this._forkToTeams(objective, objectiveId);
+      // Inject agent memory context into objective for both teams
+      let enrichedObjective = objective;
+      if (this.agentMemory) {
+        const category = this.currentObjective?.category || "general";
+        const alphaMemCtx = this.agentMemory.getMemoryContext("team-alpha", category);
+        const betaMemCtx = this.agentMemory.getMemoryContext("team-beta", category);
+        
+        // Only append memory context if there are lessons to share
+        if (alphaMemCtx || betaMemCtx) {
+          const maxCtx = alphaMemCtx.length > betaMemCtx.length ? alphaMemCtx : betaMemCtx;
+          enrichedObjective = objective + (maxCtx ? `\n\n${maxCtx}` : "");
+          console.log(`[competitive] Memory context injected for teams (${alphaMemCtx.length} + ${betaMemCtx.length} chars)`);\n        }
+      }
+
+      const [alphaResult, betaResult] = await this._forkToTeams(enrichedObjective, objectiveId);
 
       // Emit agent.message events for alpha and beta outputs
       if (alphaResult.finalOutput) {
@@ -467,6 +483,49 @@ export class CompetitiveCoordinator {
 
       this.currentPhase = "idle";
       this.currentObjective = { ...this.currentObjective, phase: "completed" };
+
+      // Record agent memories for both teams after round completion
+      if (this.agentMemory) {
+        try {
+          const category = this.currentObjective?.category || "general";
+          const alphaMem = [];
+          const betaMem = [];
+          
+          // Extract lessons specific to each team
+          if (lessons && lessons.length > 0) {
+            for (const l of lessons) {
+              const lesson = `${l.category}: ${l.lesson?.slice(0, 100) || ""}`;
+              if (l.teamId === "team-alpha") {
+                alphaMem.push(lesson);
+              } else if (l.teamId === "team-beta") {
+                betaMem.push(lesson);
+              }
+            }
+          }
+          
+          // Add evaluation outcome as a lesson
+          const evalLesson = `Evaluation: ${evaluation.reasoning?.slice(0, 60) || ""} (score: α=${evaluation.alphaScore}, β=${evaluation.betaScore})`;\n          alphaMem.push(evalLesson);
+          betaMem.push(evalLesson);
+          
+          // Record memories for both teams
+          if (alphaMem.length > 0) {\n            await this.agentMemory.recordMemory(\n              "team-alpha",\n              objectiveId,\n              alphaMem,\n              winnerTeam === "team-alpha" ? "success" : "failure",\n              { models: {}, score: evaluation.alphaScore || 0, category }\n            );
+          }
+          
+          if (betaMem.length > 0) {
+            await this.agentMemory.recordMemory(
+              "team-beta",
+              objectiveId,
+              betaMem,
+              winnerTeam === "team-beta" ? "success" : "failure",
+              { models: {}, score: evaluation.betaScore || 0, category }
+            );
+          }
+          
+          console.log(`[competitive] Agent memories recorded: α=${alphaMem.length} lessons, β=${betaMem.length} lessons`);
+        } catch (err) {
+          console.warn("[competitive] Failed to record agent memories:", err?.message);
+        }
+      }
 
       // Send ONE condensed Telegram summary for the entire round
       const elapsedMs = Date.now() - roundStartTime;
