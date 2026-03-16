@@ -362,6 +362,13 @@ export class AutonomousLoop {
     // Self-healing: track consecutive failures and failure patterns
     this.consecutiveFailures = 0;
     this.failureHistory = []; // rolling 10-entry history
+    // Autonomy metrics for /api/autonomy/status
+    this.roundsCompleted = 0;
+    this.roundsFailed = 0;
+    this.categoryHistory = []; // last 20 categories dispatched
+    this.modelSwapCount = 0;
+    this.lastRoundTs = null;
+    this.nextRoundEta = null;
   }
 
   async start() {
@@ -489,6 +496,10 @@ export class AutonomousLoop {
         if (result.status === "completed") {
           console.log(`[autonomousLoop] Round complete: category=${category} objectiveId=${objectiveId}`);
           this.consecutiveFailures = 0; // Reset on success
+          this.roundsCompleted++;
+          this.lastRoundTs = Date.now();
+        } else {
+          this.roundsFailed++;
         }
 
         this.objectivesDispatched += 1;
@@ -515,6 +526,7 @@ export class AutonomousLoop {
 
         // Self-healing: track failure type and attempt recovery
         this.consecutiveFailures++;
+        this.roundsFailed++;
         const errType = this._classifyError(err);
         this.failureHistory.push({ ts: Date.now(), type: errType, objectiveId, msg: errMsg.slice(0, 200) });
         if (this.failureHistory.length > 10) this.failureHistory.shift();
@@ -576,6 +588,7 @@ export class AutonomousLoop {
           console.log(`[autonomousLoop] Interval adjusted to ${this.currentInterval}ms (queue=${queueDepth}, load=${loadState})`);
         }
 
+        this.nextRoundEta = Date.now() + this.currentInterval;
         await new Promise((r) => setTimeout(r, this.currentInterval));
       }
     }
@@ -703,6 +716,12 @@ export class AutonomousLoop {
     } else {
       categoryIndex = (categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
     }
+    // Save state immediately after advancing categoryIndex — write-ahead so restarts
+    // don't re-dispatch the same category if the server dies during the round.
+    saveAutonomousState(categoryIndex, templateIndexes);
+    // Track category history for autonomy status endpoint
+    this.categoryHistory.push({ category: category.category, ts: Date.now() });
+    if (this.categoryHistory.length > 20) this.categoryHistory.shift();
     let selfObjectiveText = category.generator(stats);
 
     // Inject learning context into self-improvement objective

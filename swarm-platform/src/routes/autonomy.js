@@ -130,6 +130,97 @@ export function registerAutonomyRoutes(app, deps) {
     }
   });
 
+  // GET /api/autonomy/status — comprehensive autonomy health and metrics dashboard
+  app.get("/api/autonomy/status", (_req, res) => {
+    try {
+      const { autonomousLoop, store, teamLearningInstance } = deps;
+      const loop = autonomousLoop;
+
+      // Quality gate stats from events
+      const recentEvents = store ? store.getEvents(2000) : [];
+      const qgPassed = recentEvents.filter(e => e.type === "competitive.merged").length;
+      const qgFailed = recentEvents.filter(e => e.type === "competitive.quality-gate-failed").length;
+      const qgReverted = recentEvents.filter(e => e.type === "competitive.quality-gate-failed" && e.payload?.reverted).length;
+
+      // Model swap count from teamLearning round history
+      let modelSwapCount = 0;
+      const roundHistory = teamLearningInstance?.roundHistory || [];
+      for (const round of roundHistory) {
+        const hasCrossRoleLesson = (round.lessons || []).some(l => l.category === "model_swap" || l.category === "model_failure");
+        if (hasCrossRoleLesson) modelSwapCount++;
+      }
+
+      // Self-healing stats
+      const failureHistory = loop?.failureHistory || [];
+      const failuresByType = {};
+      for (const f of failureHistory) {
+        failuresByType[f.type] = (failuresByType[f.type] || 0) + 1;
+      }
+
+      // Category progress
+      const categoryHistory = loop?.categoryHistory || [];
+      const categoryCounts = {};
+      for (const c of categoryHistory) {
+        categoryCounts[c.category] = (categoryCounts[c.category] || 0) + 1;
+      }
+
+      // Next scheduled objective
+      const nextEta = loop?.nextRoundEta || null;
+      const nextEtaMs = nextEta ? Math.max(0, nextEta - Date.now()) : null;
+
+      // Current phase from competitiveCoordinator
+      const currentPhase = loop?.competitiveCoordinator?.currentPhase || "idle";
+      const currentObjective = loop?.competitiveCoordinator?.currentObjective || null;
+
+      res.json({
+        running: loop?.running || false,
+        currentPhase,
+        currentObjective,
+        rounds: {
+          dispatched: loop?.objectivesDispatched || 0,
+          completed: loop?.roundsCompleted || 0,
+          failed: loop?.roundsFailed || 0,
+          consecutiveFailures: loop?.consecutiveFailures || 0
+        },
+        categories: {
+          history: categoryHistory.slice(-10),
+          counts: categoryCounts,
+          totalCycled: categoryHistory.length
+        },
+        selfHealing: {
+          totalFailures: failureHistory.length,
+          recentFailureTypes: failuresByType,
+          failureLog: failureHistory.slice(-5).map(f => ({
+            ts: new Date(f.ts).toISOString(),
+            type: f.type,
+            objectiveId: f.objectiveId,
+            msg: f.msg.slice(0, 100)
+          }))
+        },
+        qualityGate: {
+          passed: qgPassed,
+          failed: qgFailed,
+          reverted: qgReverted,
+          passRate: (qgPassed + qgFailed) > 0 ? (qgPassed / (qgPassed + qgFailed)).toFixed(2) : "n/a"
+        },
+        modelAdaptation: {
+          swapCount: modelSwapCount,
+          roleOverrides: teamLearningInstance
+            ? (teamLearningInstance.getModelRecommendations("team-alpha")?.roleOverrides || {})
+            : {}
+        },
+        schedule: {
+          intervalMs: loop?.currentInterval || 90000,
+          nextRoundEtaMs: nextEtaMs,
+          nextRoundEtaHuman: nextEtaMs != null ? `${Math.round(nextEtaMs / 1000)}s` : null
+        },
+        lastRoundTs: loop?.lastRoundTs ? new Date(loop.lastRoundTs).toISOString() : null
+      });
+    } catch (err) {
+      res.status(500).json({ error: err?.message || "unknown" });
+    }
+  });
+
   // GET /api/autonomy/categories — list available objective categories
   app.get("/api/autonomy/categories", (_req, res) => {
     const CATEGORY_ORDER = [

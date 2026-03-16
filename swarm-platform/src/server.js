@@ -1447,10 +1447,12 @@ async function gracefulShutdown(signal) {
     autonomousLoop.stop();
   }
 
-  wss.close(() => {
-    console.log("[server] WebSocket server closed.");
-  });
-
+  // Close all open connections immediately so the port is released quickly.
+  // This prevents EADDRINUSE when PM2 restarts before the old process fully exits.
+  wss.close();
+  if (typeof server.closeAllConnections === "function") {
+    server.closeAllConnections(); // Node 18.2+
+  }
   server.close(() => {
     console.log("[server] HTTP server closed.");
   });
@@ -1459,10 +1461,11 @@ async function gracefulShutdown(signal) {
     await db.close?.();
   } catch { /* best-effort */ }
 
+  // Short timeout — port must be free before PM2 starts the new process
   setTimeout(() => {
     console.log("[server] Force exit after timeout.");
     process.exit(0);
-  }, 8000);
+  }, 2000);
 }
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));

@@ -296,9 +296,11 @@ export class CompetitiveCoordinator {
 
           if (changeResult.committed) {
             // Quality gate: run unit tests before accepting the commit
+            console.log(`[competitive] Quality gate running for ${objectiveId}…`);
             let qualityPassed = true;
             try {
               qualityPassed = await this._runQualityGate(objectiveId);
+              console.log(`[competitive] Quality gate ${qualityPassed ? "PASSED ✓" : "FAILED ✗"} for ${objectiveId}`);
             } catch (gateErr) {
               console.warn("[competitive] Quality gate error (allowing commit):", gateErr?.message);
               qualityPassed = true; // default to pass on gate infrastructure error

@@ -41,8 +41,12 @@ export class TelegramRelay {
             response: data
           };
         }
-      } catch {
-        // Retry path handled below.
+        // Log Telegram API errors so we can debug formatting issues
+        if (!data.ok) {
+          console.warn(`[telegramRelay] API error (attempt ${attempt}): ${data.description || JSON.stringify(data)}`);
+        }
+      } catch (err) {
+        console.warn(`[telegramRelay] send error (attempt ${attempt}):`, err?.message);
       }
 
       if (attempt < this.maxRetries) {
@@ -73,20 +77,18 @@ export class TelegramRelay {
       lines.push("🏆 *Swarm Round Complete*");
       lines.push("");
 
-      // Objective summary (first 100 chars)
+      // Objective summary (first 100 chars) — escape for MarkdownV2
       if (objectiveText) {
-        const objectivePreview = objectiveText.length > 100 
-          ? objectiveText.slice(0, 100) + "..." 
-          : objectiveText;
+        const objectivePreview = escapeMd(objectiveText.slice(0, 100) + (objectiveText.length > 100 ? "…" : ""));
         lines.push(`📋 *Objective:* ${objectivePreview}`);
         lines.push("");
       }
 
       // Winner info
       if (roundResult?.winner) {
-        const winnerName = (roundResult.winner || "").replace("team-", "Team ").replace(/-/g, " ");
-        const scoreDelta = roundResult.scoreDelta ?? "N/A";
-        lines.push(`🥇 *Winner:* ${winnerName} (delta: +${scoreDelta})`);
+        const winnerName = escapeMd((roundResult.winner || "").replace("team-", "Team ").replace(/-/g, " "));
+        const scoreDelta = escapeMd(String(roundResult.scoreDelta ?? "N/A"));
+        lines.push(`🥇 *Winner:* ${winnerName} \\(delta: \\+${scoreDelta}\\)`);
         lines.push("");
       }
 
@@ -94,13 +96,11 @@ export class TelegramRelay {
       if (leaderboard && leaderboard.length > 0) {
         lines.push("📊 *Leaderboard:*");
         for (const entry of leaderboard.slice(0, 4)) {
-          const name = (entry.teamName || entry.teamId || "Unknown").replace("Team ", "");
-          const score = entry.score ?? "N/A";
-          const completed = entry.completed ?? "N/A";
-          const accuracy = entry.accuracy ? `${Math.round(entry.accuracy * 100)}%` : "N/A";
-          
-          const scoreStr = typeof score === "number" ? score.toLocaleString() : score;
-          lines.push(`  ${name}: ${scoreStr} pts | ${completed} done | ${accuracy} acc`);
+          const name = escapeMd((entry.teamName || entry.teamId || "Unknown").replace("Team ", ""));
+          const score = escapeMd(typeof entry.score === "number" ? entry.score.toLocaleString() : String(entry.score ?? "N/A"));
+          const completed = escapeMd(String(entry.completed ?? "N/A"));
+          const accuracy = escapeMd(entry.accuracy ? `${Math.round(entry.accuracy * 100)}%` : "N/A");
+          lines.push(`  ${name}: ${score} pts \\| ${completed} done \\| ${accuracy} acc`);
         }
         lines.push("");
       }
@@ -108,23 +108,22 @@ export class TelegramRelay {
       // Metrics
       const metrics = [];
       if (roundResult?.avgLatency) {
-        const latencySec = Math.round(roundResult.avgLatency / 1000);
+        const latencySec = escapeMd(String(Math.round(roundResult.avgLatency / 1000)));
         metrics.push(`⚡ Latency: ${latencySec}s`);
       }
       if (roundResult?.criticApprovalRate !== undefined) {
-        const approvalPct = Math.round(roundResult.criticApprovalRate * 100);
+        const approvalPct = escapeMd(String(Math.round(roundResult.criticApprovalRate * 100)));
         metrics.push(`🎯 Critic approval: ${approvalPct}%`);
       }
       if (metrics.length > 0) {
-        lines.push(metrics.join(" | "));
+        lines.push(metrics.join(" \\| "));
       }
 
       const text = lines.join("\n");
 
       // Check message length (Telegram limit is 4096, we keep well under)
       if (text.length > 4000) {
-        // If too long, truncate gracefully
-        const truncated = text.slice(0, 3900) + "\n...[truncated]";
+        const truncated = text.slice(0, 3900) + "\n\\.\\.\\.\\[truncated\\]";
         return this.send({ text: truncated, chatId: target, parseMode: "MarkdownV2" });
       }
 
