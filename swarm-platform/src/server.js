@@ -22,6 +22,17 @@ import { requireAdmin } from "./auth.js";
 import { validateDispatchBody, validateEventBody } from "./validation.js";
 import { discoverLocalModels, chooseModelForRole, loadModelRouting, readModelLatency, readModelCapabilities, computeInventoryStatus } from "./modelCatalog.js";
 import { AutonomousLoop } from "./autonomousLoop.js";
+import { CompetitiveCoordinator } from "./competitiveCoordinator.js";
+import { WorktreeManager } from "./worktreeManager.js";
+import { TeamLearning } from "./teamLearning.js";
+import { ExplorationEngine } from "./explorationEngine.js";
+import { ObjectivePerformanceTracker } from "./objectivePerformance.js";
+import { registerCompetitiveRoutes } from "./routes/competitive.js";
+import { registerLearningRoutes } from "./routes/learning.js";
+import { registerExplorationRoutes } from "./routes/exploration.js";
+import { registerModelRoutes } from "./routes/models.js";
+import { registerOpsRoutes } from "./routes/ops.js";
+import { registerAutonomyRoutes } from "./routes/autonomy.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -116,7 +127,7 @@ const telegramBot = new TelegramBot({
         createEvent,
         store,
         db,
-        modelName: process.env.COORDINATOR_MODEL || "deepseek-r1:8b",
+        modelName: process.env.COORDINATOR_MODEL || "qwen2.5:14b",
         chooseModelForRole: (opts) =>
           chooseModelForRole({ ...opts, models: modelInventory.models, routing: modelRouting, latency: modelLatency })
       });
@@ -344,18 +355,6 @@ app.get("/api/leaderboard", (_req, res) => {
   res.json({ leaderboard: store.getLeaderboard() });
 });
 
-app.get("/api/system", (_req, res) => {
-  res.json({
-    system: currentSystem,
-    loadState,
-    queueDepth: queue.depth,
-    activeAgents,
-    maxActiveAgents: cfg.maxActiveAgents,
-    runnerMode: cfg.runnerMode,
-    adminKeyRequired: Boolean(process.env.ADMIN_API_KEY),
-    pausedTeams: [...pausedTeams]
-  });
-});
 
 app.get("/api/agents", (_req, res) => {
   res.json(store.getActiveAgents());
@@ -374,21 +373,6 @@ app.get("/api/telegram", (_req, res) => {
   });
 });
 
-app.get("/api/models", (_req, res) => {
-  modelInventory = discoverLocalModels();
-  modelRouting = loadModelRouting();
-  modelLatency = readModelLatency();
-  modelCapabilities = readModelCapabilities();
-  const status = computeInventoryStatus({ models: modelInventory.models, routing: modelRouting });
-  res.json({
-    inventory: modelInventory,
-    policyRoles: policyEngine.policies?.roles || {},
-    routing: modelRouting,
-    latency: modelLatency,
-    capabilities: modelCapabilities,
-    inventoryStatus: status
-  });
-});
 
 app.get("/api/tasks", (_req, res) => {
   res.json({ tasks: store.getTaskSessions() });
@@ -426,9 +410,6 @@ app.get("/api/openclaw", (_req, res) => {
   });
 });
 
-app.get("/api/queue", (_req, res) => {
-  res.json({ depth: queue.depth, items: queue.items.slice(0, 50) });
-});
 
 app.get("/api/audit", (_req, res) => {
   const events = store.getEvents(1000);
@@ -455,23 +436,6 @@ app.get("/api/objectives", (req, res) => {
   res.json({ objectives: teamId ? rows.filter((r) => r.teamId === teamId) : rows });
 });
 
-app.get("/api/ops", (_req, res) => {
-  const status = computeInventoryStatus({ models: modelInventory.models, routing: modelRouting });
-  res.json({
-    system: currentSystem,
-    loadState,
-    queue: { depth: queue.depth, items: queue.items.slice(0, 30) },
-    runnerMode: cfg.runnerMode,
-    activeAgents: store.getActiveAgents(50).active,
-    inventoryStatus: status,
-    modelLatency,
-    modelCapabilities,
-    openclaw: {
-      gatewayUrl: cfg.openclawGatewayUrl,
-      canvasUrl: `${cfg.openclawGatewayUrl}${cfg.openclawCanvasPath}`
-    }
-  });
-});
 
 app.get("/api/agent-output/:taskId", async (req, res) => {
   const taskId = req.params.taskId;
@@ -561,23 +525,7 @@ app.get("/api/swarm-sessions", async (req, res) => {
   });
 });
 
-app.get("/api/model-metrics", async (req, res) => {
-  const model = req.query.model || undefined;
-  const role = req.query.role || undefined;
-  const since = req.query.since || undefined;
-  const until = req.query.until || undefined;
-  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
-  const rows = await db.getModelMetrics({ model, role, since, until, limit });
-  res.json({ metrics: rows || [] });
-});
 
-app.get("/api/gpu-history", async (req, res) => {
-  const since = req.query.since || undefined;
-  const until = req.query.until || undefined;
-  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
-  const rows = await db.getGpuHistory({ since, until, limit });
-  res.json({ snapshots: rows || [] });
-});
 
 app.get("/api/telegram-messages", (req, res) => {
   const chatId = req.query.chatId || cfg.telegramDefaultChatId;
@@ -743,7 +691,7 @@ app.post("/api/orchestrator/swarm-run", requireAdmin, async (req, res) => {
     createEvent,
     store,
     db,
-    modelName: process.env.COORDINATOR_MODEL || "deepseek-r1:8b",
+    modelName: process.env.COORDINATOR_MODEL || "qwen2.5:14b",
     chooseModelForRole: (opts) =>
       chooseModelForRole({
         ...opts,
@@ -824,64 +772,27 @@ async function maybeSendTelegramForTerminalEvent(event) {
 
 const _swarmTelegramLastSent = new Map();
 async function maybeSendTelegramForSwarmEvent(event) {
-  if (!event.type.startsWith("swarm.session.") && event.type !== "task.completed" && event.type !== "task.failed"
-      && event.type !== "reward.applied" && event.type !== "penalty.applied" && event.type !== "task.timeout") return;
+  // Only send Telegram for high-signal events. Competitive round summaries
+  // are handled by competitiveCoordinator._sendRoundSummary().
+  const importantTypes = new Set([
+    "competitive.feedback",
+    "competitive.restarting"
+  ]);
+  if (!importantTypes.has(event.type)) return;
 
   const chatId = cfg.telegramDefaultChatId;
   if (!chatId || !cfg.telegramToken) return;
 
-  const objId = event.payload?.objectiveId || "";
-  const shortId = objId.slice(0, 16);
-  const team = event.teamId || "unknown";
-  let text = "";
-
-  switch (event.type) {
-    case "swarm.session.created":
-      text = `*New Objective* [${shortId}]\nTeam: ${team}\n\n_${(event.payload?.objective || "").slice(0, 300)}_`;
-      break;
-    case "swarm.session.decomposed": {
-      const subs = event.payload?.subTasks || [];
-      const lines = subs.map((s) => `  - ${s.role}: ${(s.description || "").slice(0, 80)}`).join("\n");
-      text = `*Plan Ready* [${shortId}]\n${subs.length} sub-tasks:\n${lines}`;
-      break;
-    }
-    case "swarm.session.dispatching":
-      text = `*Dispatching* [${shortId}] wave ${event.payload?.wave || "?"}`;
-      break;
-    case "swarm.session.executing":
-      text = `*Executing* [${shortId}] iteration ${event.payload?.iteration || "?"}`;
-      break;
-    case "swarm.session.reviewing":
-      text = `*Critic Reviewing* [${shortId}] iteration ${event.payload?.iteration || "?"}`;
-      break;
-    case "swarm.session.aggregating":
-      text = `*Aggregating* [${shortId}] final deliverable...`;
-      break;
-    case "swarm.session.completed":
-      text = `*COMPLETED* [${shortId}]\n\n${(event.payload?.finalOutput || "").slice(0, 500)}`;
-      break;
-    case "swarm.session.failed":
-      text = `*FAILED* [${shortId}]\nError: ${event.payload?.error || "unknown"}`;
-      break;
-    case "reward.applied":
-      text = `*Reward* [${team}] +${event.payload?.pointsAdded || 0} pts: ${event.payload?.reason || ""}`;
-      break;
-    case "penalty.applied":
-      text = `*Penalty* [${team}] -${event.payload?.pointsDeducted || 0} pts: ${event.payload?.reason || ""}`;
-      break;
-    case "task.timeout":
-      text = `*Timeout* [${team}] task ${event.payload?.taskId || "?"} (${event.payload?.role || "?"})`;
-      break;
-    default:
-      return;
-  }
-
-  if (!text) return;
-
-  const key = `${event.type}:${objId}`;
+  const key = `${event.type}:${event.payload?.objectiveId || ""}`;
   const now = Date.now();
-  if (_swarmTelegramLastSent.has(key) && now - _swarmTelegramLastSent.get(key) < 5000) return;
+  if (_swarmTelegramLastSent.has(key) && now - _swarmTelegramLastSent.get(key) < 10000) return;
   _swarmTelegramLastSent.set(key, now);
+
+  let text = "";
+  if (event.type === "competitive.restarting") {
+    text = `*Self-update detected.* Graceful restart scheduled...`;
+  }
+  if (!text) return;
 
   try {
     await telegramBot.sendMessage(chatId, text);
@@ -909,12 +820,10 @@ async function startExecution({ teamId, task, taskId, role, policy, actorRole = 
   modelInventory = discoverLocalModels();
   modelRouting = loadModelRouting();
   modelLatency = readModelLatency();
-  const chosen = chooseModelForRole({
+  const chosen = learningAwareChooseModel({
     role,
+    teamId,
     modelTier: policy?.modelTier || "standard",
-    models: modelInventory.models,
-    routing: modelRouting,
-    latency: modelLatency
   });
 
   await emitEvent(
@@ -1193,6 +1102,51 @@ app.post("/api/orchestrator/dispatch", requireAdmin, async (req, res) => {
   return res.json({ accepted: true, taskId: plan.taskId, role: plan.role, loadState });
 });
 
+// Create global state accessor for ops routes
+const globalState = {
+  modelInventory,
+  modelRouting,
+  modelLatency,
+  modelCapabilities,
+  currentSystem,
+  loadState
+};
+
+function getSystemState() {
+  return {
+    modelInventory: globalState.modelInventory,
+    modelRouting: globalState.modelRouting,
+    modelLatency: globalState.modelLatency,
+    modelCapabilities: globalState.modelCapabilities,
+    currentSystem: globalState.currentSystem,
+    loadState: globalState.loadState
+  };
+}
+
+// Register route modules for models and ops (non-dependent on autonomy)
+registerModelRoutes(app, {
+  discoverLocalModels,
+  loadModelRouting,
+  readModelLatency,
+  readModelCapabilities,
+  computeInventoryStatus,
+  policyEngine,
+  db,
+  globalState
+});
+
+registerOpsRoutes(app, {
+  getSystemState,
+  queue,
+  cfg,
+  store,
+  computeInventoryStatus,
+  db,
+  pausedTeams
+});
+
+
+
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "not_found" });
   const indexPath = path.join(root, "ui", "dist", "index.html");
@@ -1211,6 +1165,10 @@ setInterval(() => {
   loadState = classifyLoad(currentSystem, cfg);
   loadState = admission.update({ systemSnapshot: currentSystem, queueDepth: queue.depth, activeAgents });
   queue.clearExpired(Number(process.env.QUEUE_MAX_AGE_MS || 300000));
+
+  // Update global state
+  globalState.currentSystem = currentSystem;
+  globalState.loadState = loadState;
 
   if (currentSystem?.gpu?.available) {
     db.insertGpuSnapshot({
@@ -1247,38 +1205,176 @@ setInterval(() => {
   broadcast("state", snapshot());
 }, cfg.pollMs);
 
-function startAutonomousLoop() {
+let worktreeManager = null;
+let competitiveCoord = null;
+let autonomousLoop = null;
+
+try {
+  worktreeManager = new WorktreeManager({
+    telegramBot,
+    chatId: cfg.telegramDefaultChatId
+  });
+} catch (err) {
+  console.warn("[server] WorktreeManager init failed:", err?.message);
+}
+
+let teamLearningInstance = null;
+let explorationEngineInstance = null;
+
+function learningAwareChooseModel(opts) {
+  const base = chooseModelForRole({
+    ...opts,
+    models: modelInventory.models,
+    routing: modelRouting,
+    latency: modelLatency
+  });
+
+  if (!teamLearningInstance || !opts.teamId) return base;
+
+  const adaptive = teamLearningInstance.getAdaptiveModelChoice(
+    opts.teamId,
+    opts.role,
+    base.selectedModel,
+    modelRouting
+  );
+
+  if (adaptive.reason !== "default") {
+    console.log(`[model-select] Learning override for ${opts.teamId}/${opts.role}: ${base.selectedModel} -> ${adaptive.model} (${adaptive.reason})`);
+    return {
+      ...base,
+      selectedModel: adaptive.model,
+      rationale: `${base.rationale} | Learning: ${adaptive.reason}`
+    };
+  }
+
+  // Also check tool_capability lessons — if current model has been flagged as lacking tool support,
+  // prefer a tool-capable model (qwen2.5-coder or deepseek-coder)
+  if (opts.role === "build" || opts.role === "research") {
+    const recentHistory = teamLearningInstance.roundHistory?.slice(-3) ?? [];
+    const toolLessons = recentHistory
+      .flatMap(r => r.lessons ?? [])
+      .filter(l => l.teamId === opts.teamId && l.role === opts.role && l.category === "tool_capability" && l.model === base.selectedModel);
+    if (toolLessons.length > 0) {
+      const route = modelRouting?.roleRoutes?.[opts.role];
+      const fallback = route?.fallback?.find(m => m.includes("coder") || m.includes("qwen"));
+      if (fallback && fallback !== base.selectedModel) {
+        console.log(`[model-select] Tool capability override for ${opts.teamId}/${opts.role}: ${base.selectedModel} -> ${fallback} (tool_capability lesson)`);
+        return { ...base, selectedModel: fallback, rationale: `${base.rationale} | ToolCapability: switched to ${fallback}` };
+      }
+    }
+  }
+
+  return base;
+}
+
+async function startAutonomousLoop() {
   if (cfg.autonomousMode === "off") {
     console.log("[server] Autonomous mode is OFF.");
     return;
   }
 
-  const coordinator = new SwarmCoordinator({
-    runTask,
+  teamLearningInstance = new TeamLearning({ db, store });
+  await teamLearningInstance.init();
+
+  explorationEngineInstance = new ExplorationEngine({ db, store, teamLearning: teamLearningInstance });
+
+  const objectivePerformanceTrackerInstance = new ObjectivePerformanceTracker({ db });
+  await objectivePerformanceTrackerInstance.init();
+
+  const runTaskWithTools = (opts) => runTask({ ...opts, explorationEngine: explorationEngineInstance });
+
+  const coordinatorOpts = {
+    runTask: runTaskWithTools,
     emitEvent,
     createEvent,
     store,
     db,
-    modelName: process.env.COORDINATOR_MODEL || "deepseek-r1:8b",
-    chooseModelForRole: (opts) =>
-      chooseModelForRole({ ...opts, models: modelInventory.models, routing: modelRouting, latency: modelLatency }),
-    timeoutMs: cfg.runnerTimeoutMs
+    modelName: process.env.COORDINATOR_MODEL || "qwen2.5:14b",
+    chooseModelForRole: learningAwareChooseModel,
+    timeoutMs: cfg.runnerTimeoutMs,
+    explorationEngine: explorationEngineInstance,
+    teamLearning: teamLearningInstance
+  };
+
+  const coordinator = new SwarmCoordinator(coordinatorOpts);
+
+  competitiveCoord = new CompetitiveCoordinator({
+    ...coordinatorOpts,
+    worktreeManager,
+    telegramBot,
+    chatId: cfg.telegramDefaultChatId,
+    teamLearning: teamLearningInstance,
+    objectivePerformanceTracker: objectivePerformanceTrackerInstance
   });
 
-  const loop = new AutonomousLoop({
+  autonomousLoop = new AutonomousLoop({
+    competitiveCoordinator: competitiveCoord,
     coordinator,
     telegramBot,
     store,
     db,
     chatId: cfg.telegramDefaultChatId,
-    interval: 30000,
+    interval: 90000,
     emitEvent,
-    createEvent
+    createEvent,
+    teamLearning: teamLearningInstance,
+    explorationEngine: explorationEngineInstance,
+    admissionController: admission
   });
 
-  setTimeout(() => loop.start(), 5000);
-  console.log("[server] Autonomous loop will start in 5 seconds.");
+  // Register route modules that depend on autonomy instances
+  registerCompetitiveRoutes(app, {
+    requireAdmin,
+    worktreeManager,
+    competitiveCoord
+  });
+
+  registerLearningRoutes(app, {
+    teamLearningInstance
+  });
+
+  registerExplorationRoutes(app, {
+    explorationEngineInstance
+  });
+
+  registerAutonomyRoutes(app, {
+    autonomousLoop,
+    teamLearningInstance,
+    objectivePerformanceTrackerInstance,
+    competitiveCoord
+  });
+
+  setTimeout(() => autonomousLoop.start(), 5000);
+  console.log("[server] Competitive autonomous loop will start in 5 seconds.");
 }
+
+async function gracefulShutdown(signal) {
+  console.log(`[server] ${signal} received. Shutting down gracefully...`);
+
+  if (autonomousLoop) {
+    autonomousLoop.stop();
+  }
+
+  wss.close(() => {
+    console.log("[server] WebSocket server closed.");
+  });
+
+  server.close(() => {
+    console.log("[server] HTTP server closed.");
+  });
+
+  try {
+    await db.close?.();
+  } catch { /* best-effort */ }
+
+  setTimeout(() => {
+    console.log("[server] Force exit after timeout.");
+    process.exit(0);
+  }, 8000);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 const checkOnly = process.argv.includes("--check");
 if (!checkOnly) {

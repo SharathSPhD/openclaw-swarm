@@ -29,17 +29,29 @@
       "deepseek-coder:6.7b",
       "llama3.1:8b",
       "mistral:7b",
-      "gemma2:9b",
-      "deepseek-r1:8b"
+      "gemma2:9b"
     ],
     "quality": [
-      "deepseek-r1:8b",
       "qwen2.5:14b",
-      "gpt-oss:120b",
-      "deepseek-coder:6.7b",
+      "gemma2:9b",
       "qwen2.5-coder:7b",
-      "gemma2:9b"
+      "deepseek-coder:6.7b",
+      "deepseek-r1:8b"
     ]
+  },
+  "modelCapabilities": {
+    "deepseek-r1:8b": { "toolCalling": false, "reasoning": true, "notes": "Strong reasoning but no Ollama tool support" },
+    "qwen2.5:14b": { "toolCalling": true, "reasoning": true, "notes": "Best all-round: tools + reasoning" },
+    "qwen2.5:7b": { "toolCalling": true, "reasoning": true },
+    "qwen2.5-coder:7b": { "toolCalling": true, "reasoning": true, "notes": "Optimized for code" },
+    "llama3.1:8b": { "toolCalling": true, "reasoning": true },
+    "gemma2:9b": { "toolCalling": true, "reasoning": true },
+    "mistral:7b": { "toolCalling": true, "reasoning": true },
+    "deepseek-coder:6.7b": { "toolCalling": true, "reasoning": true, "notes": "Code-focused" },
+    "nemotron-mini:4b": { "toolCalling": true, "reasoning": false, "notes": "Fast, lightweight" },
+    "phi3:mini": { "toolCalling": true, "reasoning": false, "notes": "Smallest, fastest" },
+    "qwen2.5:3b": { "toolCalling": true, "reasoning": false },
+    "llama3.2:3b": { "toolCalling": true, "reasoning": false }
   },
   "roleRoutes": {
     "research": {
@@ -59,18 +71,23 @@
     },
     "integrator": {
       "tier": "quality",
-      "primary": "deepseek-r1:8b",
-      "fallback": ["qwen2.5:14b", "gemma2:9b", "mistral:7b"]
+      "primary": "qwen2.5:14b",
+      "fallback": ["gemma2:9b", "mistral:7b"]
     },
     "coordinator": {
       "tier": "quality",
-      "primary": "deepseek-r1:8b",
-      "fallback": ["qwen2.5:14b", "gemma2:9b"]
+      "primary": "qwen2.5:14b",
+      "fallback": ["gemma2:9b", "qwen2.5:7b"]
     },
     "program-lead": {
       "tier": "quality",
-      "primary": "nemotron-mini:4b",
-      "fallback": ["deepseek-r1:8b", "qwen2.5:14b"]
+      "primary": "qwen2.5:14b",
+      "fallback": ["nemotron-mini:4b", "gemma2:9b"]
+    },
+    "evaluator": {
+      "tier": "quality",
+      "primary": "qwen2.5:14b",
+      "fallback": ["gemma2:9b", "qwen2.5:7b"]
     }
   }
 }

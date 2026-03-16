@@ -19,32 +19,25 @@ const META_OBJECTIVE_CATEGORIES = [
   },
   {
     category: "coverage",
-    generator: () => {
-      return "Research what capabilities the swarm platform is currently missing compared to a full multi-agent AI system. Consider: error recovery strategies, inter-agent communication patterns, context sharing between sub-tasks, and progressive refinement. List the top 3 most impactful gaps with implementation suggestions.";
-    }
+    generator: () => "Research what capabilities the swarm platform is currently missing compared to a full multi-agent AI system. Consider: error recovery strategies, inter-agent communication patterns, context sharing between sub-tasks, and progressive refinement. List the top 3 most impactful gaps with implementation suggestions."
   },
   {
     category: "documentation",
-    generator: (stats) => {
-      return `Generate a comprehensive status report of the swarm platform. Include: total completed objectives (${stats.completed}), team scores (Alpha: ${stats.alphaScore}, Beta: ${stats.betaScore}), average task latency, model utilization breakdown, and recommendations for the next 24 hours of autonomous operation.`;
-    }
+    generator: (stats) => `Generate a comprehensive status report of the swarm platform. Include: total completed objectives (${stats.completed}), team scores (Alpha: ${stats.alphaScore}, Beta: ${stats.betaScore}, Gamma: ${stats.gammaScore}), average task latency, model utilization breakdown, and recommendations for the next 24 hours of autonomous operation.`
   },
   {
     category: "system_health",
-    generator: () => {
-      return "Analyze the system health of our swarm platform running on DGX Spark. Check GPU memory usage patterns, model loading/unloading frequency, and identify any models that consistently cause OOM errors. Report current resource utilization and recommend optimal model concurrency limits.";
-    }
+    generator: () => "Analyze the system health of our swarm platform running on DGX Spark. Check GPU memory usage patterns, model loading/unloading frequency, and identify any models that consistently cause OOM errors. Report current resource utilization and recommend optimal model concurrency limits."
   },
   {
     category: "testing",
-    generator: () => {
-      return "Design a comprehensive test plan for the swarm platform's coordinator-specialist pattern. Include tests for: task decomposition quality, dependency graph correctness, critic review accuracy, aggregation completeness, and error recovery. Provide specific test scenarios with expected outcomes.";
-    }
+    generator: () => "Design a comprehensive test plan for the swarm platform's coordinator-specialist pattern. Include tests for: task decomposition quality, dependency graph correctness, critic review accuracy, aggregation completeness, and error recovery. Provide specific test scenarios with expected outcomes."
   }
 ];
 
 export class AutonomousLoop {
-  constructor({ coordinator, telegramBot, store, db, chatId, interval = 60000, emitEvent, createEvent }) {
+  constructor({ competitiveCoordinator, coordinator, telegramBot, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController }) {
+    this.competitiveCoordinator = competitiveCoordinator;
     this.coordinator = coordinator;
     this.telegramBot = telegramBot;
     this.store = store;
@@ -53,85 +46,126 @@ export class AutonomousLoop {
     this.interval = interval;
     this.emitEvent = emitEvent;
     this.createEvent = createEvent;
+    this.teamLearning = teamLearning;
+    this.explorationEngine = explorationEngine;
+    this.admissionController = admissionController || null;
+    this.baseInterval = interval;
+    this.currentInterval = interval;
     this.running = false;
-    this.currentTeam = "team-alpha";
     this.categoryIndex = 0;
     this.objectivesDispatched = 0;
-    this.maxConcurrentObjectives = 2;
+    this.maxConcurrentObjectives = 1;
   }
 
   async start() {
     this.running = true;
-    console.log("[autonomousLoop] Started. Will dispatch one objective at a time, alternating teams.");
+    const mode = this.competitiveCoordinator ? "competitive (3-team)" : "single-team";
+    console.log(`[autonomousLoop] Started in ${mode} mode.`);
+
+    // Reconcile stale objectives from previous crashes
+    const board = this.store.getObjectiveBoard(500);
+    const staleActive = board.filter(o => o.status === "active");
+    if (staleActive.length > 0) {
+      console.log(`[autonomousLoop] Reconciling ${staleActive.length} stale active objectives...`);
+      for (const obj of staleActive) {
+        await this.emitEvent(
+          this.createEvent({
+            type: "swarm.session.failed",
+            teamId: obj.teamId || "program-lead",
+            source: "autonomous-loop",
+            payload: { objectiveId: obj.objectiveId, error: "stale_reconciliation", reason: "Server restarted; objective was active during previous session" }
+          })
+        );
+      }
+    }
 
     if (this.telegramBot && this.chatId) {
+      const stats = this._gatherStats();
       await this.telegramBot.sendMessage(this.chatId,
-        "*Autonomous Mode Activated*\nThe program lead will now generate and dispatch self-improvement objectives, alternating between teams."
+        `*Swarm Platform Online*\n` +
+        `Mode: ${mode}\n` +
+        `Objectives completed: ${stats.completed}\n` +
+        `Scores: A=${stats.alphaScore} B=${stats.betaScore} G=${stats.gammaScore}\n` +
+        `Avg latency: ${Math.round(stats.avgLatency / 1000)}s\n` +
+        `Teams Alpha+Beta compete, Gamma implements, Delta explores.` +
+        (staleActive.length > 0 ? `\n${staleActive.length} stale objectives cleaned up.` : "")
       ).catch(() => {});
     }
 
     while (this.running) {
+      let objectiveId = `auto-${Date.now()}`;
       try {
         const board = this.store.getObjectiveBoard(200);
         const activeCount = board.filter((o) => o.status === "active").length;
         if (activeCount >= this.maxConcurrentObjectives) {
-          console.log(`[autonomousLoop] ${activeCount} active objectives (max ${this.maxConcurrentObjectives}). Waiting...`);
-          await new Promise((r) => setTimeout(r, this.interval));
+          await new Promise((r) => setTimeout(r, this.currentInterval || this.interval));
           continue;
         }
 
         const stats = this._gatherStats();
-        const objective = this._generateNextObjective(stats);
-        const objectiveId = `auto-${Date.now()}`;
+        const selected = this._selectNextObjective(stats);
+        objectiveId = selected.objectiveId;
+        const { objective, isExternal, category } = selected;
 
-        console.log(`[autonomousLoop] Dispatching objective #${this.objectivesDispatched + 1} to ${this.currentTeam}: ${objective.slice(0, 100)}...`);
-
-        if (this.telegramBot && this.chatId) {
-          await this.telegramBot.sendMessage(this.chatId,
-            `*Program Lead* dispatching to ${this.currentTeam}:\n_${objective.slice(0, 300)}_`
-          ).catch(() => {});
-        }
+        console.log(`[autonomousLoop] #${this.objectivesDispatched + 1} [${category}${isExternal ? " EXPLORE" : ""}]: ${objective.slice(0, 80)}...`);
 
         await this.emitEvent(
           this.createEvent({
             type: "objective.created",
-            teamId: this.currentTeam,
+            teamId: "program-lead",
             source: "autonomous-loop",
-            payload: { objectiveId, objective, actorRole: "program-lead", source: "autonomous" }
+            payload: { objectiveId, objective, actorRole: "program-lead", source: "autonomous", category, isExternal }
           })
         );
 
-        const result = await this.coordinator.executeObjective({
-          teamId: this.currentTeam,
-          objective,
-          objectiveId,
-          maxIterations: 2
-        });
+        let result;
+        if (isExternal && this.coordinator) {
+          console.log(`[autonomousLoop] Exploration objective routed to team-delta`);
+          // #region agent log
+          fetch('http://localhost:7454/ingest/1e0718d6-c2bf-4928-9fab-1ef1d6f587b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a5b4ff'},body:JSON.stringify({sessionId:'a5b4ff',location:'autonomousLoop.js:delta-dispatch',message:'Delta dispatch',data:{objectiveId,category,isExternal:true,objectivePreview:objective.slice(0,150)},hypothesisId:'H3-delta-dispatch',timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
+          result = await this.coordinator.executeObjective({ teamId: "team-delta", objective, objectiveId, maxIterations: 2 });
+        } else if (this.competitiveCoordinator) {
+          result = await this.competitiveCoordinator.executeCompetitiveObjective({ objective, objectiveId, category });
+        } else {
+          result = await this.coordinator.executeObjective({ teamId: "team-alpha", objective, objectiveId, maxIterations: 2 });
+        }
 
         this.objectivesDispatched += 1;
 
-        if (this.telegramBot && this.chatId) {
-          const statusEmoji = result.status === "completed" ? "COMPLETED" : "FAILED";
-          const output = (result.finalOutput || "").slice(0, 500);
-          await this.telegramBot.sendMessage(this.chatId,
-            `*${statusEmoji}* [${this.currentTeam}] Objective #${this.objectivesDispatched}\n\n${output || result.error || "No output"}`
-          ).catch(() => {});
-        }
-
-        this.currentTeam = this.currentTeam === "team-alpha" ? "team-beta" : "team-alpha";
-        this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
-
       } catch (err) {
-        console.warn("[autonomousLoop] Error:", err?.message || err);
+        const errMsg = err?.stack || err?.message || String(err);
+        console.error(`[autonomousLoop] Round ${objectiveId} FAILED:`, errMsg);
         if (this.telegramBot && this.chatId) {
-          await this.telegramBot.sendMessage(this.chatId,
-            `*Autonomous Loop Error*: ${err?.message || "unknown"}\nRetrying in ${this.interval / 1000}s...`
-          ).catch(() => {});
+          try {
+            await this.telegramBot.sendMessage(
+              this.chatId,
+              `⚠️ Round ${objectiveId} failed: ${(err?.message || "unknown error").slice(0, 200)}`
+            );
+          } catch { /* best-effort */ }
         }
       }
 
       if (this.running) {
-        await new Promise((r) => setTimeout(r, this.interval));
+        // Calculate dynamic interval based on queue depth and load state
+        let queueDepth = 0;
+        let loadState = "green";
+        try {
+          if (this.admissionController) {
+            const decision = this.admissionController.decide({ role: "program-lead" });
+            loadState = decision?.state || "green";
+          }
+          // Count active objectives as a proxy for queue depth
+          const board = this.store.getObjectiveBoard(200);
+          queueDepth = board.filter((o) => o.status === "active").length;
+        } catch { /* best-effort */ }
+
+        this.currentInterval = this._calculateDynamicInterval(queueDepth, loadState);
+        if (this.currentInterval !== this.baseInterval) {
+          console.log(`[autonomousLoop] Interval adjusted to ${this.currentInterval}ms (queue=${queueDepth}, load=${loadState})`);
+        }
+
+        await new Promise((r) => setTimeout(r, this.currentInterval));
       }
     }
   }
@@ -141,10 +175,81 @@ export class AutonomousLoop {
     console.log("[autonomousLoop] Stopped.");
   }
 
+  _calculateDynamicInterval(queueDepth, loadState) {
+    // Backoff on large queues
+    if (queueDepth > 30) return 15000;
+    if (queueDepth > 20) return 30000;
+    if (queueDepth > 10) return 60000;
+
+    // Aggressive backoff on critical load with empty queue
+    if (queueDepth === 0 && loadState === "critical") return 180000;
+    if (loadState === "critical") return 180000;
+    if (loadState === "high") return 120000;
+
+    return this.baseInterval; // default (90s or configured)
+  }
+
+  _selectNextObjective(stats) {
+    const objectiveId = `auto-${Date.now()}`;
+
+    // Calculate lesson-based weights
+    const recentLessons = this.teamLearning?.roundHistory?.slice(-2) ?? [];
+    const criticalCount = recentLessons.flatMap(r => r.lessons ?? []).filter(l => l.severity === "critical").length;
+    const selfWeight = criticalCount > 3 ? 0.35 : 0.6;
+    const exploreWeight = 1 - selfWeight;
+    if (criticalCount > 3) {
+      console.log(`[autonomousLoop] selfWeight=${selfWeight} (${criticalCount} critical lessons → boosting exploration)`);
+    }
+
+    // Always generate both objective types so weighObjectives can compare
+    const category = META_OBJECTIVE_CATEGORIES[this.categoryIndex];
+    this.categoryIndex = (this.categoryIndex + 1) % META_OBJECTIVE_CATEGORIES.length;
+    let selfObjectiveText = category.generator(stats);
+
+    // Inject learning context into self-improvement objective
+    if (this.teamLearning && this.teamLearning.roundHistory.length > 0) {
+      const criticalLessons = this.teamLearning.roundHistory.slice(-3)
+        .flatMap(r => r.lessons)
+        .filter(l => l.severity === "critical")
+        .slice(0, 3)
+        .map(l => l.lesson)
+        .join("; ");
+      if (criticalLessons) {
+        selfObjectiveText += `\n\nRecent critical lessons from past rounds: ${criticalLessons}. Factor these into your analysis.`;
+      }
+    }
+
+    const selfObj = { objective: selfObjectiveText, objectiveId, isExternal: false, category: category.category };
+
+    // Use weighObjectives if explorationEngine is available
+    if (this.explorationEngine && this.objectivesDispatched > 0) {
+      const explorationData = this.objectivesDispatched % 6 === 0
+        ? this.explorationEngine.generateSkillDiscoveryObjective()
+        : this.explorationEngine.generateExplorationObjective(stats);
+      const exploreObj = { objective: explorationData.objective, objectiveId, isExternal: true, category: explorationData.category };
+
+      const weighted = this.explorationEngine.weighObjectives(selfObj, exploreObj, { ...stats, selfWeight, exploreWeight });
+
+      // Use global lesson tie-breaker: if weights are close (within 0.1), defer to lesson-suggested category
+      if (this.teamLearning && Math.abs(selfWeight - exploreWeight) < 0.1) {
+        this.teamLearning.getSuggestedObjective(stats).then(suggestedCategory => {
+          if (suggestedCategory) {
+            console.log(`[autonomousLoop] Cross-team lesson tie-breaker suggests category: ${suggestedCategory}`);
+          }
+        }).catch(() => {});
+      }
+
+      return weighted.selected;
+    }
+
+    return selfObj;
+  }
+
   _gatherStats() {
     const leaderboard = this.store.getLeaderboard();
     const alpha = leaderboard.find((r) => r.teamName === "Team Alpha" || r.teamId === "team-alpha") || {};
     const beta = leaderboard.find((r) => r.teamName === "Team Beta" || r.teamId === "team-beta") || {};
+    const gamma = leaderboard.find((r) => r.teamName === "Team Gamma" || r.teamId === "team-gamma") || {};
 
     const events = this.store.getEvents(2000);
     const completedEvents = events.filter((e) => e.type === "task.completed");
@@ -157,16 +262,12 @@ export class AutonomousLoop {
     const criticApprovalRate = totalReviews > 0 ? firstPassApprovals / totalReviews : 1;
 
     return {
-      completed: (alpha.completed || 0) + (beta.completed || 0),
+      completed: (alpha.completed || 0) + (beta.completed || 0) + (gamma.completed || 0),
       alphaScore: alpha.score || 0,
       betaScore: beta.score || 0,
+      gammaScore: gamma.score || 0,
       avgLatency,
       criticApprovalRate
     };
-  }
-
-  _generateNextObjective(stats) {
-    const category = META_OBJECTIVE_CATEGORIES[this.categoryIndex];
-    return category.generator(stats);
   }
 }

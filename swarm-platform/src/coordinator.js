@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { buildToolContext, buildToolAwarePrompt } from "./toolContextBuilder.js";
 
 const VALID_ROLES = new Set(["research", "build", "critic", "integrator"]);
 const MIN_SUBTASKS = 2;
@@ -155,7 +156,7 @@ function validateSubTasks(raw) {
 }
 
 export class SwarmCoordinator {
-  constructor({ runTask, emitEvent, createEvent, store, db, modelName = "deepseek-r1:8b", chooseModelForRole, timeoutMs = 300000 }) {
+  constructor({ runTask, emitEvent, createEvent, store, db, modelName = "qwen2.5:14b", chooseModelForRole, timeoutMs = 300000, explorationEngine, teamLearning }) {
     this.runTask = runTask;
     this.emitEvent = emitEvent;
     this.createEvent = createEvent;
@@ -164,6 +165,8 @@ export class SwarmCoordinator {
     this.modelName = modelName;
     this.chooseModelForRole = chooseModelForRole || (() => ({ selectedModel: "qwen2.5:7b" }));
     this.timeoutMs = timeoutMs;
+    this.explorationEngine = explorationEngine || null;
+    this.teamLearning = teamLearning || null;
   }
 
   async decompose(objective) {
@@ -260,9 +263,15 @@ Objective: ${objective}`;
           const baseTask = dependencyContext
             ? `Context from prior tasks:\n${dependencyContext}\n\nYour task: ${subTask.description}`
             : subTask.description;
-          const taskPrompt = feedbackPrefix + baseTask;
+          let taskPrompt = feedbackPrefix + baseTask;
+          if (this.explorationEngine) {
+            const toolContext = buildToolContext(this.explorationEngine);
+            if (toolContext) {
+              taskPrompt = buildToolAwarePrompt({ role: subTask.role, taskText: feedbackPrefix + baseTask, toolContext, codebaseHint: "" });
+            }
+          }
 
-          const chosen = this.chooseModelForRole({ role: subTask.role, modelTier: "standard" });
+          const chosen = this.chooseModelForRole({ role: subTask.role, modelTier: "standard", teamId });
           const model = chosen?.selectedModel || "qwen2.5:7b";
 
           return new Promise((resolve) => {
@@ -276,13 +285,22 @@ Objective: ${objective}`;
               mode,
               onEvent: async (event) => {
                 await this.emitEvent({ ...event, source: event.source || "runner" });
-                if (event.type === "task.completed" || event.type === "task.failed") {
-                  resolve({
-                    taskId: subTask.id,
-                    ok: event.type === "task.completed",
-                    output: event.payload?.output || null,
-                    error: event.payload?.error || null
+                if (event.type === "task.completed") {
+                  this.teamLearning?.recordTaskOutcome({
+                    teamId, model: event.payload?.model || model, role: subTask.role,
+                    success: true, latencyMs: event.payload?.durationMs,
+                    correctness: event.payload?.correctness,
+                    outputLength: (event.payload?.output || "").length,
+                    roundId: objectiveId
                   });
+                  resolve({ taskId: subTask.id, ok: true, output: event.payload?.output || null, error: null });
+                } else if (event.type === "task.failed") {
+                  this.teamLearning?.recordTaskOutcome({
+                    teamId, model: event.payload?.model || model, role: subTask.role,
+                    success: false, errorType: event.payload?.error,
+                    latencyMs: event.payload?.durationMs, roundId: objectiveId
+                  });
+                  resolve({ taskId: subTask.id, ok: false, output: null, error: event.payload?.error || null });
                 }
               }
             });

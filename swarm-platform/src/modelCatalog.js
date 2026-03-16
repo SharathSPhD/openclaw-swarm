@@ -14,9 +14,10 @@ const ROLE_PREFERENCES = {
   research: ["qwen2.5:7b", "phi3:mini", "llama3.2:3b", "nemotron-mini:4b", "qwen2.5:3b"],
   build: ["qwen2.5-coder:7b", "deepseek-coder:6.7b", "qwen2.5:7b", "gemma2:9b"],
   critic: ["llama3.1:8b", "mistral:7b", "qwen2.5:14b", "gemma2:9b"],
-  integrator: ["deepseek-r1:8b", "qwen2.5:14b", "gemma2:9b", "mistral:7b"],
-  coordinator: ["deepseek-r1:8b", "qwen2.5:14b", "gemma2:9b"],
-  "program-lead": ["nemotron-mini:4b", "deepseek-r1:8b", "qwen2.5:14b"]
+  integrator: ["qwen2.5:14b", "gemma2:9b", "mistral:7b"],
+  coordinator: ["qwen2.5:14b", "gemma2:9b", "qwen2.5:7b"],
+  "program-lead": ["qwen2.5:14b", "nemotron-mini:4b", "gemma2:9b"],
+  evaluator: ["qwen2.5:14b", "gemma2:9b", "qwen2.5:7b"]
 };
 
 const DEFAULT_ROUTING = {
@@ -37,16 +38,17 @@ const DEFAULT_ROUTING = {
   ],
   tiers: {
     fast: ["qwen2.5:3b", "llama3.2:3b", "phi3:mini", "nemotron-mini:4b", "qwen2.5:7b", "mistral:7b"],
-    standard: ["qwen2.5:7b", "qwen2.5-coder:7b", "deepseek-coder:6.7b", "llama3.1:8b", "mistral:7b", "gemma2:9b", "deepseek-r1:8b"],
-    quality: ["deepseek-r1:8b", "qwen2.5:14b", "gpt-oss:120b", "deepseek-coder:6.7b", "qwen2.5-coder:7b", "gemma2:9b"]
+    standard: ["qwen2.5:7b", "qwen2.5-coder:7b", "deepseek-coder:6.7b", "llama3.1:8b", "mistral:7b", "gemma2:9b"],
+    quality: ["qwen2.5:14b", "gemma2:9b", "qwen2.5-coder:7b", "deepseek-coder:6.7b"]
   },
   roleRoutes: {
     research: { tier: "fast", primary: "qwen2.5:7b", fallback: ["phi3:mini", "llama3.2:3b", "nemotron-mini:4b", "qwen2.5:3b"] },
     build: { tier: "standard", primary: "qwen2.5-coder:7b", fallback: ["deepseek-coder:6.7b", "qwen2.5:7b", "gemma2:9b"] },
     critic: { tier: "standard", primary: "llama3.1:8b", fallback: ["mistral:7b", "qwen2.5:14b", "gemma2:9b"] },
-    integrator: { tier: "quality", primary: "deepseek-r1:8b", fallback: ["qwen2.5:14b", "gemma2:9b", "mistral:7b"] },
-    coordinator: { tier: "quality", primary: "deepseek-r1:8b", fallback: ["qwen2.5:14b", "gemma2:9b"] },
-    "program-lead": { tier: "quality", primary: "nemotron-mini:4b", fallback: ["deepseek-r1:8b", "qwen2.5:14b"] }
+    integrator: { tier: "quality", primary: "qwen2.5:14b", fallback: ["gemma2:9b", "mistral:7b"] },
+    coordinator: { tier: "quality", primary: "qwen2.5:14b", fallback: ["gemma2:9b", "qwen2.5:7b"] },
+    "program-lead": { tier: "quality", primary: "qwen2.5:14b", fallback: ["nemotron-mini:4b", "gemma2:9b"] },
+    evaluator: { tier: "quality", primary: "qwen2.5:14b", fallback: ["gemma2:9b", "qwen2.5:7b"] }
   }
 };
 

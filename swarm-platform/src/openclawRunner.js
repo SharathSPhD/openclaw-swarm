@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
+import { buildToolContext, buildToolAwarePrompt } from "./toolContextBuilder.js";
 
 const RAW_OUTPUT_MAX = 8000;
 const SIGKILL_GRACE_MS = 5000;
@@ -91,13 +92,19 @@ function classifyError(code, stderr) {
   return "process_crash";
 }
 
-function runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, runId, startedAt, agent, onEvent }) {
-  const prompt = `${role.toUpperCase()} task ${taskId}: ${taskText}`;
+function runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, runId, startedAt, agent, onEvent, worktreePath, explorationEngine }) {
+  const codebaseHint = worktreePath
+    ? `\nThe project codebase is available at: ${worktreePath}\nYour working directory is set to the team worktree. Make changes there.`
+    : "\nThe project codebase is available at /codebase/swarm-platform/ inside the sandbox.";
+  const toolContext = buildToolContext(explorationEngine);
+  const prompt = buildToolAwarePrompt({ role, taskText: `task ${taskId}: ${taskText}`, toolContext, codebaseHint });
   const agentId = agent || ROLE_TO_AGENT[role] || "main";
   const args = ["agent", "--agent", agentId, "--message", prompt, "--json"];
+  const spawnCwd = worktreePath || undefined;
   const child = spawn("openclaw", args, {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env }
+    env: { ...process.env },
+    ...(spawnCwd ? { cwd: spawnCwd } : {})
   });
 
   let stdout = "";
@@ -163,7 +170,7 @@ function runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, 
         onEvent({ type: "reward.applied", teamId, payload: { taskId, role, pointsAdded: 10, reason: "high_quality" } });
       }
     } else {
-      const errorType = timedOut && (code === 137 || code === 143) ? "runner_timeout" : classifyError(code, stderr);
+      const errorType = timedOut ? "runner_timeout" : classifyError(code, stderr);
       onEvent({
         type: "task.failed",
         teamId,
@@ -182,7 +189,7 @@ function runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, 
   return child;
 }
 
-export function runTask({ teamId, role, taskId, taskText, timeoutMs = 120000, telegramTo, agent, modelName = "qwen2.5:7b", mode = "mock", useTools = false, onEvent }) {
+export function runTask({ teamId, role, taskId, taskText, timeoutMs = 120000, telegramTo, agent, modelName = "qwen2.5:7b", mode = "mock", useTools = false, worktreePath, explorationEngine, onEvent }) {
   const startedAt = Date.now();
   const runId = crypto.randomUUID();
 
@@ -216,6 +223,6 @@ export function runTask({ teamId, role, taskId, taskText, timeoutMs = 120000, te
     return { runId, process: null };
   }
 
-  const child = runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, runId, startedAt, agent, onEvent });
+  const child = runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, runId, startedAt, agent, onEvent, worktreePath, explorationEngine });
   return { runId, process: child };
 }
