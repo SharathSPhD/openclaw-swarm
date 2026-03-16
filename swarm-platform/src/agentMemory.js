@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { v4 as uuidv4 } from "uuid";
+import crypto from "node:crypto";
 
 export class AgentMemory {
   constructor({ dataDir }) {
@@ -53,7 +53,7 @@ export class AgentMemory {
     const lessonsArray = Array.isArray(lessons) ? lessons : [String(lessons)];
 
     const memory = {
-      id: uuidv4(),
+      id: crypto.randomUUID(),
       teamId,
       round,
       category,

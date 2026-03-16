@@ -159,7 +159,8 @@ export class CompetitiveCoordinator {
         if (alphaMemCtx || betaMemCtx) {
           const maxCtx = alphaMemCtx.length > betaMemCtx.length ? alphaMemCtx : betaMemCtx;
           enrichedObjective = objective + (maxCtx ? `\n\n${maxCtx}` : "");
-          console.log(`[competitive] Memory context injected for teams (${alphaMemCtx.length} + ${betaMemCtx.length} chars)`);\n        }
+          console.log(`[competitive] Memory context injected for teams (${alphaMemCtx.length} + ${betaMemCtx.length} chars)`);
+        }
       }
 
       const [alphaResult, betaResult] = await this._forkToTeams(enrichedObjective, objectiveId);
@@ -504,11 +505,19 @@ export class CompetitiveCoordinator {
           }
           
           // Add evaluation outcome as a lesson
-          const evalLesson = `Evaluation: ${evaluation.reasoning?.slice(0, 60) || ""} (score: α=${evaluation.alphaScore}, β=${evaluation.betaScore})`;\n          alphaMem.push(evalLesson);
+          const evalLesson = `Evaluation: ${evaluation.reasoning?.slice(0, 60) || ""} (score: α=${evaluation.alphaScore}, β=${evaluation.betaScore})`;
+          alphaMem.push(evalLesson);
           betaMem.push(evalLesson);
           
           // Record memories for both teams
-          if (alphaMem.length > 0) {\n            await this.agentMemory.recordMemory(\n              "team-alpha",\n              objectiveId,\n              alphaMem,\n              winnerTeam === "team-alpha" ? "success" : "failure",\n              { models: {}, score: evaluation.alphaScore || 0, category }\n            );
+          if (alphaMem.length > 0) {
+            await this.agentMemory.recordMemory(
+              "team-alpha",
+              objectiveId,
+              alphaMem,
+              winnerTeam === "team-alpha" ? "success" : "failure",
+              { models: {}, score: evaluation.alphaScore || 0, category }
+            );
           }
           
           if (betaMem.length > 0) {

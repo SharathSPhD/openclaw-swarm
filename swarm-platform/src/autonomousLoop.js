@@ -352,7 +352,7 @@ const META_OBJECTIVE_CATEGORIES = [
 ];
 
 export class AutonomousLoop {
-  constructor({ competitiveCoordinator, coordinator, telegramBot, telegramRelay, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController, objectivePerformanceTracker, projectRoot }) {
+  constructor({ competitiveCoordinator, coordinator, telegramBot, telegramRelay, store, db, chatId, interval = 90000, emitEvent, createEvent, teamLearning, explorationEngine, admissionController, objectivePerformanceTracker, specializationEngine, projectRoot }) {
     this.competitiveCoordinator = competitiveCoordinator;
     this.coordinator = coordinator;
     this.telegramBot = telegramBot;
@@ -367,6 +367,7 @@ export class AutonomousLoop {
     this.explorationEngine = explorationEngine;
     this.admissionController = admissionController || null;
     this.objectivePerformanceTracker = objectivePerformanceTracker || null;
+    this.specializationEngine = specializationEngine || null;
     this.baseInterval = interval;
     this.currentInterval = interval;
     this.running = false;
@@ -514,8 +515,29 @@ export class AutonomousLoop {
           this.consecutiveFailures = 0; // Reset on success
           this.roundsCompleted++;
           this.lastRoundTs = Date.now();
+
+          // Record outcome for specialization engine
+          if (this.specializationEngine && category) {
+            const score = (result.evaluation?.alphaScore ?? 0) + (result.evaluation?.betaScore ?? 0);
+            this.specializationEngine.recordRoundOutcome({
+              category,
+              success: true,
+              score,
+              teamId: "swarm"
+            });
+          }
         } else {
           this.roundsFailed++;
+
+          // Record failure for specialization engine
+          if (this.specializationEngine && category) {
+            this.specializationEngine.recordRoundOutcome({
+              category,
+              success: false,
+              score: 0,
+              teamId: "swarm"
+            });
+          }
         }
 
         this.objectivesDispatched += 1;

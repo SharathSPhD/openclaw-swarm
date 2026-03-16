@@ -27,16 +27,18 @@ import { WorktreeManager } from "./worktreeManager.js";
 import { TeamLearning } from "./teamLearning.js";
 import { ExplorationEngine } from "./explorationEngine.js";
 import { ObjectivePerformanceTracker } from "./objectivePerformance.js";
+import { SpecializationEngine } from "./specializationEngine.js";
 import { AgentMemory } from "./agentMemory.js";
 import { registerCompetitiveRoutes } from "./routes/competitive.js";
 import { registerLearningRoutes } from "./routes/learning.js";
 import { registerExplorationRoutes } from "./routes/exploration.js";
+import { registerSpecializationRoutes } from "./routes/specialization.js";
 import { registerModelRoutes } from "./routes/models.js";
 import { registerOpsRoutes } from "./routes/ops.js";
 import { registerAutonomyRoutes } from "./routes/autonomy.js";
-import { registerAgentRoutes } from \"./routes/agents.js\";
-import { ResourceRequests } from \"./resourceRequests.js\";
-import { registerRequestRoutes } from \"./routes/requests.js\";
+import { registerAgentRoutes } from "./routes/agents.js";
+import { ResourceRequests } from "./resourceRequests.js";
+import { registerRequestRoutes } from "./routes/requests.js";
 
 import { createMetricsRouter } from './routes/metrics.js';
 const __filename = fileURLToPath(import.meta.url);
@@ -88,6 +90,7 @@ const eventProcessor = new EventProcessor(null, db);
 const store = new Store(cfg.retention, db, eventProcessor);
 eventProcessor.store = store;
 const agentMemory = new AgentMemory({ dataDir: path.join(root, "data") });
+const resourceRequests = new ResourceRequests({ dataDir: path.join(root, "data") });
 
 const policyEngine = new PolicyEngine();
 const queue = new QueueManager();
@@ -1224,6 +1227,7 @@ let autonomousLoop = null;
 let teamLearningInstance = null;
 let explorationEngineInstance = null;
 let objectivePerformanceTrackerInstance = null;
+let specializationEngineInstance = null;
 
 // Register autonomy/competitive/learning routes here (before catch-all) using lazy module-level refs.
 // These instances are set by startAutonomousLoop() after server.listen(), but the routes must be
@@ -1244,6 +1248,11 @@ registerCompetitiveRoutes(app, {
   get competitiveCoord() { return competitiveCoord; }
 });
 
+registerRequestRoutes(app, {
+  requireAdmin,
+  resourceRequests
+});
+
 registerLearningRoutes(app, {
   get teamLearningInstance() { return teamLearningInstance; }
 });
@@ -1252,6 +1261,10 @@ registerExplorationRoutes(app, {
   get explorationEngineInstance() { return explorationEngineInstance; }
 });
 
+registerSpecializationRoutes(app, {
+  requireAdmin,
+  get specializationEngine() { return specializationEngineInstance; }
+});
 
 registerAgentRoutes(app, {
   agentMemory
@@ -1313,6 +1326,11 @@ setInterval(() => {
 
   broadcast("state", snapshot());
 }, cfg.pollMs);
+
+// Check for newly detected env tokens every 60 seconds
+setInterval(() => {
+  resourceRequests.checkEnvDetection();
+}, 60000);
 
 try {
   worktreeManager = new WorktreeManager({
@@ -1378,10 +1396,17 @@ async function startAutonomousLoop() {
   teamLearningInstance = new TeamLearning({ db, store });
   await teamLearningInstance.init();
 
-  explorationEngineInstance = new ExplorationEngine({ db, store, teamLearning: teamLearningInstance });
-
   objectivePerformanceTrackerInstance = new ObjectivePerformanceTracker({ db });
   await objectivePerformanceTrackerInstance.init();
+
+  specializationEngineInstance = new SpecializationEngine({
+    dataDir: path.join(root, "data"),
+    teamLearning: teamLearningInstance,
+    objectivePerformanceTracker: objectivePerformanceTrackerInstance
+  });
+  await specializationEngineInstance.init();
+
+  explorationEngineInstance = new ExplorationEngine({ db, store, teamLearning: teamLearningInstance, specializationEngine: specializationEngineInstance });
 
   const runTaskWithTools = (opts) => runTask({ ...opts, explorationEngine: explorationEngineInstance });
 
@@ -1406,7 +1431,8 @@ async function startAutonomousLoop() {
     telegramBot,
     chatId: cfg.telegramDefaultChatId,
     teamLearning: teamLearningInstance,
-    objectivePerformanceTracker: objectivePerformanceTrackerInstance
+    objectivePerformanceTracker: objectivePerformanceTrackerInstance,
+    agentMemory
   });
 
   autonomousLoop = new AutonomousLoop({
@@ -1424,6 +1450,7 @@ async function startAutonomousLoop() {
     explorationEngine: explorationEngineInstance,
     admissionController: admission,
     objectivePerformanceTracker: objectivePerformanceTrackerInstance,
+    specializationEngine: specializationEngineInstance,
     projectRoot: path.resolve(__dirname, '..', '..')
   });
 

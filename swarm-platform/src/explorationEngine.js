@@ -59,10 +59,11 @@ const EXTERNAL_OBJECTIVE_TEMPLATES = [
 ];
 
 export class ExplorationEngine {
-  constructor({ db, store, teamLearning }) {
+  constructor({ db, store, teamLearning, specializationEngine }) {
     this.db = db;
     this.store = store;
     this.teamLearning = teamLearning;
+    this.specializationEngine = specializationEngine;
     this.explorationIndex = 0;
     this.completedExplorations = new Set();
     this.codebaseAnalysisCache = null;
@@ -639,22 +640,32 @@ export class ExplorationEngine {
       return this.generateExplorationObjective(stats);
     }
 
-    const weighted = eligible.map(t => {
-      let adjustedWeight = t.weight;
-      if (t.category === "security_audit" && stats.completed < 5) adjustedWeight *= 1.5;
-      if (t.category === "resilience" && stats.avgLatency > 30000) adjustedWeight *= 1.3;
-      if (t.category === "code_quality" && stats.completed > 20) adjustedWeight *= 1.2;
-      return { ...t, adjustedWeight };
-    });
+    // Use specialization engine to bias category selection if available
+    let selectedCategory = null;
+    if (this.specializationEngine) {
+      const availableCategories = eligible.map(t => t.category);
+      selectedCategory = this.specializationEngine.getBiasedCategory(availableCategories);
+    } else {
+      // Fallback to weighted random selection
+      const weighted = eligible.map(t => {
+        let adjustedWeight = t.weight;
+        if (t.category === "security_audit" && stats.completed < 5) adjustedWeight *= 1.5;
+        if (t.category === "resilience" && stats.avgLatency > 30000) adjustedWeight *= 1.3;
+        if (t.category === "code_quality" && stats.completed > 20) adjustedWeight *= 1.2;
+        return { ...t, adjustedWeight };
+      });
 
-    weighted.sort((a, b) => b.adjustedWeight - a.adjustedWeight);
-    const selected = weighted[0];
+      weighted.sort((a, b) => b.adjustedWeight - a.adjustedWeight);
+      selectedCategory = weighted[0].category;
+    }
+
+    const selected = eligible.find(t => t.category === selectedCategory) || eligible[0];
     this.completedExplorations.add(selected.category);
 
     return {
       category: selected.category,
       objective: selected.generator(),
-      weight: selected.adjustedWeight,
+      weight: selected.weight,
       isExternal: true,
       fromCodeAnalysis: false
     };
