@@ -104,8 +104,13 @@ function runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, 
   const child = spawn("openclaw", args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env },
+    // detached=true creates a new process group so we can kill the entire group
+    // (including openclaw-agent subprocesses that inherit our pipes) on timeout
+    detached: true,
     ...(spawnCwd ? { cwd: spawnCwd } : {})
   });
+  // Don't prevent the node process from exiting while waiting for children
+  child.unref();
 
   let stdout = "";
   let stderr = "";
@@ -113,12 +118,18 @@ function runViaOpenClaw({ teamId, role, taskId, taskText, modelName, timeoutMs, 
   let timedOut = false;
   let killGraceTimer = null;
 
+  // Kill the entire process group (negative PID) to ensure grandchildren
+  // (openclaw-agent) are also killed and don't keep our pipes open
+  const killGroup = (signal) => {
+    try { process.kill(-child.pid, signal); } catch { /* process may already be gone */ }
+  };
+
   const mainTimer = setTimeout(() => {
     if (finalized) return;
     timedOut = true;
-    child.kill("SIGTERM");
+    killGroup("SIGTERM");
     killGraceTimer = setTimeout(() => {
-      if (!finalized && child.exitCode === null) child.kill("SIGKILL");
+      if (!finalized) killGroup("SIGKILL");
     }, SIGKILL_GRACE_MS);
   }, timeoutMs);
 
