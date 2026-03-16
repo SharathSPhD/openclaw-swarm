@@ -8,6 +8,7 @@ import DashboardPage from "./pages/DashboardPage";
 import ObjectivesPage from "./pages/ObjectivesPage";
 import TimelinePage from "./pages/TimelinePage";
 import OpsPage from "./pages/OpsPage";
+import AgentsPage from "./pages/AgentsPage";
 import AuditPage from "./pages/AuditPage";
 import TelegramPage from "./pages/TelegramPage";
 import LeaderboardPage from "./pages/LeaderboardPage";
@@ -113,7 +114,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<DashboardPage snapshot={snapshot} lastMessage={lastMessage} />} />
             <Route path="/competition" element={<ObjectivesPage />} />
-            <Route path="/agents" element={<OpsPage snapshot={snapshot} />} />
+            <Route path="/agents" element={<AgentsPage />} />
             <Route path="/objectives" element={<ObjectivesPage />} />
             <Route path="/timeline" element={<TimelinePage />} />
             <Route path="/ops" element={<OpsPage snapshot={snapshot} />} />

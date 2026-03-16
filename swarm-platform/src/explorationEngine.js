@@ -59,15 +59,23 @@ const EXTERNAL_OBJECTIVE_TEMPLATES = [
 ];
 
 export class ExplorationEngine {
-  constructor({ db, store, teamLearning, specializationEngine }) {
+  constructor({ db, store, teamLearning, specializationEngine, aiTechExplorer }) {
     this.db = db;
     this.store = store;
     this.teamLearning = teamLearning;
     this.specializationEngine = specializationEngine;
+    this.aiTechExplorer = aiTechExplorer;
     this.explorationIndex = 0;
     this.completedExplorations = new Set();
     this.codebaseAnalysisCache = null;
     this.codebaseAnalysisCalls = 0;
+  }
+
+  _enhanceObjectiveWithAiTechContext(objective) {
+    if (!this.aiTechExplorer) return objective;
+
+    const aiTechSummary = this.aiTechExplorer.getSummaryForPrompt();
+    return `${objective}\n\n---\n\n${aiTechSummary}`;
   }
 
   async _findUntestedFunctions() {
@@ -625,7 +633,7 @@ export class ExplorationEngine {
         this.completedExplorations.add(category);
         return {
           category,
-          objective,
+          objective: this._enhanceObjectiveWithAiTechContext(objective),
           weight: 0.72, // Boost for analysis-driven objectives
           isExternal: true,
           fromCodeAnalysis: true
@@ -664,7 +672,7 @@ export class ExplorationEngine {
 
     return {
       category: selected.category,
-      objective: selected.generator(),
+      objective: this._enhanceObjectiveWithAiTechContext(selected.generator()),
       weight: selected.weight,
       isExternal: true,
       fromCodeAnalysis: false
@@ -683,9 +691,7 @@ export class ExplorationEngine {
       ? tools.map(t => `  - ${t.agent}: ${t.tool}`).join("\n")
       : "  (none configured in openclaw.json — agents use built-in web_search, read_file, write_file, execute_code)";
 
-    return {
-      category: "skill_discovery",
-      objective: `Audit the OpenClaw skill and tool ecosystem for the swarm platform.
+    const skillObjective = `Audit the OpenClaw skill and tool ecosystem for the swarm platform.
 
 CURRENTLY INSTALLED SKILLS (${skills.length}):
 ${skillSummary}
@@ -700,7 +706,11 @@ Your task:
 4. Propose 2-3 new skill ideas specific to the swarm platform's research/build/critic/integrator pipeline
 5. Design a "skill-aware prompt injection" strategy: how should the swarm platform proactively include relevant skill instructions in agent prompts?
 
-Be specific and actionable. Reference the actual skill names and capabilities when making recommendations.`,
+Be specific and actionable. Reference the actual skill names and capabilities when making recommendations.`;
+
+    return {
+      category: "skill_discovery",
+      objective: this._enhanceObjectiveWithAiTechContext(skillObjective),
       weight: 0.75,
       isExternal: true
     };

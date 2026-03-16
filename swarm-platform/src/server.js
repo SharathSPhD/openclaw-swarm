@@ -29,6 +29,9 @@ import { ExplorationEngine } from "./explorationEngine.js";
 import { ObjectivePerformanceTracker } from "./objectivePerformance.js";
 import { SpecializationEngine } from "./specializationEngine.js";
 import { AgentMemory } from "./agentMemory.js";
+import { AiTechExplorer } from "./aiTechExplorer.js";
+import { RagPipeline } from "./ragPipeline.js";
+import { FineTuningPrep } from "./fineTuningPrep.js";
 import { registerCompetitiveRoutes } from "./routes/competitive.js";
 import { registerLearningRoutes } from "./routes/learning.js";
 import { registerExplorationRoutes } from "./routes/exploration.js";
@@ -37,6 +40,9 @@ import { registerModelRoutes } from "./routes/models.js";
 import { registerOpsRoutes } from "./routes/ops.js";
 import { registerAutonomyRoutes } from "./routes/autonomy.js";
 import { registerAgentRoutes } from "./routes/agents.js";
+import { registerRagRoutes } from "./routes/rag.js";
+import { registerFineTuningRoutes } from "./routes/finetuning.js";
+import { registerAiTechRoutes } from "./routes/aitech.js";
 import { ResourceRequests } from "./resourceRequests.js";
 import { registerRequestRoutes } from "./routes/requests.js";
 
@@ -90,6 +96,9 @@ const eventProcessor = new EventProcessor(null, db);
 const store = new Store(cfg.retention, db, eventProcessor);
 eventProcessor.store = store;
 const agentMemory = new AgentMemory({ dataDir: path.join(root, "data") });
+const ragPipeline = new RagPipeline({ dataDir: path.join(root, "data") });
+const fineTuningPrep = new FineTuningPrep({ dataDir: path.join(root, "data") });
+const aiTechExplorer = new AiTechExplorer({ dataDir: path.join(root, "data") });
 const resourceRequests = new ResourceRequests({ dataDir: path.join(root, "data") });
 
 const policyEngine = new PolicyEngine();
@@ -1269,6 +1278,11 @@ registerSpecializationRoutes(app, {
 registerAgentRoutes(app, {
   agentMemory
 });
+
+registerRagRoutes(app, {
+  ragPipeline
+});
+
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "not_found" });
   const indexPath = path.join(root, "ui", "dist", "index.html");
@@ -1393,6 +1407,30 @@ async function startAutonomousLoop() {
     return;
   }
 
+  // Initialize RAG Pipeline
+  try {
+    await ragPipeline.init();
+    console.log("[server] RAG Pipeline initialized");
+  } catch (err) {
+    console.warn("[server] RAG Pipeline init failed:", err.message);
+  }
+
+  // Initialize AI Tech Explorer
+  try {
+    await aiTechExplorer.init();
+    console.log("[server] AI Tech Explorer initialized");
+  } catch (err) {
+    console.warn("[server] AI Tech Explorer init failed:", err.message);
+  }
+
+  // Initialize Fine-Tuning Data Preparation
+  try {
+    await fineTuningPrep.init();
+    console.log("[server] Fine-Tuning Prep initialized");
+  } catch (err) {
+    console.warn("[server] Fine-Tuning Prep init failed:", err.message);
+  }
+
   teamLearningInstance = new TeamLearning({ db, store });
   await teamLearningInstance.init();
 
@@ -1432,7 +1470,9 @@ async function startAutonomousLoop() {
     chatId: cfg.telegramDefaultChatId,
     teamLearning: teamLearningInstance,
     objectivePerformanceTracker: objectivePerformanceTrackerInstance,
-    agentMemory
+    agentMemory,
+    ragPipeline,
+    fineTuningPrep
   });
 
   autonomousLoop = new AutonomousLoop({

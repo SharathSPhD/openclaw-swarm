@@ -21,7 +21,9 @@ export class CompetitiveCoordinator {
     chatId,
     teamLearning,
     objectivePerformanceTracker,
-    agentMemory
+    agentMemory,
+    ragPipeline,
+    fineTuningPrep
   }) {
     this.runTask = runTask;
     this.emitEvent = emitEvent;
@@ -37,6 +39,8 @@ export class CompetitiveCoordinator {
     this.teamLearning = teamLearning;
     this.objectivePerformanceTracker = objectivePerformanceTracker || null;
     this.agentMemory = agentMemory || null;
+    this.ragPipeline = ragPipeline || null;
+    this.fineTuningPrep = fineTuningPrep || null;
 
     this.alphaCoordinator = new SwarmCoordinator({
       runTask, emitEvent, createEvent, store, db,
@@ -163,6 +167,15 @@ export class CompetitiveCoordinator {
         }
       }
 
+      // Inject RAG context after memory context
+      if (this.ragPipeline) {
+        const ragCtx = this.ragPipeline.getContext(objective, { topK: 3 });
+        if (ragCtx) {
+          enrichedObjective = enrichedObjective + '\n\n' + ragCtx;
+          console.log(`[competitive] RAG context injected (${ragCtx.length} chars)`);
+        }
+      }
+
       const [alphaResult, betaResult] = await this._forkToTeams(enrichedObjective, objectiveId);
 
       // Emit agent.message events for alpha and beta outputs
@@ -240,6 +253,51 @@ export class CompetitiveCoordinator {
       }));
 
       console.log(`[competitive] Winner: ${winnerTeam}. Reasoning: ${evaluation.reasoning.slice(0, 100)}`);
+
+      // Record fine-tuning data
+      if (this.fineTuningPrep) {
+        this.fineTuningPrep.recordRound({
+          objective,
+          alphaOutput: alphaResult.finalOutput || '',
+          betaOutput: betaResult.finalOutput || '',
+          alphaScore: evaluation.alphaScore || 0,
+          betaScore: evaluation.betaScore || 0,
+          winner: winnerTeam,
+          category: this.currentObjective?.category || 'unknown',
+          roundId: objectiveId
+        }).catch(err => console.warn('[fineTuning] record error:', err?.message));
+      }
+
+      // Save round outputs to RAG corpus
+      if (this.ragPipeline) {
+        try {
+          if (alphaResult.finalOutput) {
+            await this.ragPipeline.addDocument({
+              title: `Alpha output: ${objective.slice(0, 60)}`,
+              content: alphaResult.finalOutput,
+              category: 'output',
+              source: 'competitive-round',
+              roundId: objectiveId,
+              teamId: 'team-alpha',
+              score: evaluation?.alphaScore || 0
+            });
+          }
+          if (betaResult.finalOutput) {
+            await this.ragPipeline.addDocument({
+              title: `Beta output: ${objective.slice(0, 60)}`,
+              content: betaResult.finalOutput,
+              category: 'output',
+              source: 'competitive-round',
+              roundId: objectiveId,
+              teamId: 'team-beta',
+              score: evaluation?.betaScore || 0
+            });
+          }
+          console.log('[competitive] RAG: saved alpha and beta outputs to corpus');
+        } catch (err) {
+          console.warn('[competitive] RAG save failed:', err?.message);
+        }
+      }
 
       // Phase 3: Implement - team-gamma implements the winning approach
       this.currentPhase = "implementing";
