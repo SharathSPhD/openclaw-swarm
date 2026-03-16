@@ -23,7 +23,8 @@ export class CompetitiveCoordinator {
     objectivePerformanceTracker,
     agentMemory,
     ragPipeline,
-    fineTuningPrep
+    fineTuningPrep,
+    specializationEngine
   }) {
     this.runTask = runTask;
     this.emitEvent = emitEvent;
@@ -41,6 +42,8 @@ export class CompetitiveCoordinator {
     this.agentMemory = agentMemory || null;
     this.ragPipeline = ragPipeline || null;
     this.fineTuningPrep = fineTuningPrep || null;
+    this.specializationEngine = specializationEngine || null;
+    this.roundsCompleted = 0;
 
     this.alphaCoordinator = new SwarmCoordinator({
       runTask, emitEvent, createEvent, store, db,
@@ -991,76 +994,79 @@ Your task:
   async _sendRoundSummary({ objective, objectiveId, evaluation, winnerTeam, loserTeam, alphaResult, betaResult, gammaResult, mergeInfo, lessons, feedback, elapsedMs }) {
     if (!this.telegramBot || !this.chatId) return;
 
-    const elapsedSec = elapsedMs ? Math.round(elapsedMs / 1000) : 0;
-    const objShort = escapeMd(objective.slice(0, 120));
-    const objEllipsis = objective.length > 120 ? "\\.\\.\\." : "";
-    const winner = escapeMd(winnerTeam);
-    const alphaScoreStr = escapeMd(String(evaluation?.alphaScore ?? "?"));
-    const betaScoreStr = escapeMd(String(evaluation?.betaScore ?? "?"));
-    
-    const sanitize = (raw) => {
-      if (!raw) return "";
-      let text = raw.trim();
-      try {
-        const obj = JSON.parse(text);
-        if (obj?.result?.payloads) {
-          const payload = obj.result.payloads.find(p => p?.text);
-          if (payload) text = payload.text;
-        }
-      } catch { /* not JSON */ }
-      if (text.includes("Ollama API error")) {
-        const errMatch = text.match(/"error":"([^"]+)"/);
-        text = errMatch ? `[Model error: ${errMatch[1]}]` : "[Model error]";
-      }
-      return text.trim();
+    this.roundsCompleted++;
+
+    const obj = objective.slice(0, 60);
+    const elapsed = Math.round((elapsedMs || 0) / 1000);
+    const winner = winnerTeam === "team-alpha" ? "α" : "β";
+    const aScore = evaluation?.alphaScore ?? "?";
+    const bScore = evaluation?.betaScore ?? "?";
+    const why = (evaluation?.reasoning || "").slice(0, 80);
+    const hasGamma = !!(gammaResult?.finalOutput);
+
+    // Get model info from teamLearning if available
+    const getTopModel = (teamId) => {
+      if (!this.teamLearning) return "?";
+      const records = (this.teamLearning.performanceRecords || [])
+        .filter(r => r.roundId === objectiveId && r.teamId === teamId && r.model);
+      if (!records.length) return "?";
+      const freq = {};
+      for (const r of records) freq[r.model] = (freq[r.model] || 0) + 1;
+      return Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0].split("/").pop().slice(0, 20);
     };
 
-    const alphaOut = sanitize(alphaResult?.finalOutput)?.slice(0, 150) || "";
-    const betaOut = sanitize(betaResult?.finalOutput)?.slice(0, 150) || "";
-    const gammaOut = sanitize(gammaResult?.finalOutput)?.slice(0, 200) || "";
-    
-    const alphaEscaped = escapeMd(alphaOut);
-    const betaEscaped = escapeMd(betaOut);
-    const gammaEscaped = escapeMd(gammaOut);
+    const alphaModel = getTopModel("team-alpha");
+    const betaModel = getTopModel("team-beta");
 
-    const reasoningEscaped = escapeMd((evaluation?.reasoning || "").slice(0, 150));
+    const lines = [
+      `🏆 Round #${this.roundsCompleted} · ${elapsed}s`,
+      `📋 ${escapeMd(obj)}`,
+      `Winner: *${winner === "α" ? "Alpha" : "Beta"}* \\(α:${aScore} β:${bScore}\\)`,
+      `α model: \`${escapeMd(alphaModel)}\` β model: \`${escapeMd(betaModel)}\``,
+      why ? `Why: ${escapeMd(why.slice(0, 70))}` : null,
+      hasGamma ? `✅ Gamma implemented` : null,
+    ].filter(Boolean);
 
-    const lines = [];
-    lines.push(`🏆 *Round Complete* · ${escapeMd(String(elapsedSec))}s`);
-    lines.push(`Objective: _${objShort}${objEllipsis}_`);
-    lines.push("");
-    lines.push(`Winner: *${winner}* \\(α:${alphaScoreStr} vs β:${betaScoreStr}\\)`);
-    if (reasoningEscaped) {
-      lines.push(`Why: ${reasoningEscaped}`);
+    await this._safeTelegramSend(lines.join("\n"));
+
+    // Every 5 rounds, send cumulative digest
+    if (this.roundsCompleted % 5 === 0) {
+      await this._sendCumulativeDigest();
     }
-    lines.push("");
+  }
 
-    if (alphaOut) {
-      lines.push(`*Alpha* proposed:`);
-      lines.push(`\`${alphaEscaped}\``);
-    }
-    if (betaOut) {
-      lines.push(`*Beta* proposed:`);
-      lines.push(`\`${betaEscaped}\``);
-    }
+  async _sendCumulativeDigest() {
+    if (!this.telegramBot || !this.chatId) return;
 
-    const criticalLessons = (lessons || []).filter(l => l.severity === "critical");
-    if (criticalLessons.length > 0 || gammaOut) {
-      lines.push("");
-    }
-
-    if (gammaOut) {
-      lines.push(`*Gamma* found:`);
-      lines.push(`_${gammaEscaped}_`);
+    // Get win rates from teamLearning
+    let alphaWins = 0, betaWins = 0, totalRounds = this.roundsCompleted;
+    if (this.teamLearning) {
+      const records = this.teamLearning.performanceRecords || [];
+      // Count by team success rate as proxy for wins
+      for (const r of records) {
+        if (r.success && r.role === "coordinator") {
+          if (r.teamId === "team-alpha") alphaWins++;
+          else if (r.teamId === "team-beta") betaWins++;
+        }
+      }
     }
 
-    if (mergeInfo?.changedFiles?.length > 0) {
-      lines.push("");
-      const fileCount = escapeMd(String(mergeInfo.changedFiles.length));
-      lines.push(`Changed: ${fileCount} files \\| ${escapeMd(String(elapsedSec))}s`);
+    // Get specialization if available
+    let specLine = "";
+    if (this.specializationEngine) {
+      try {
+        const analysis = this.specializationEngine.getAnalysis();
+        if (analysis.recommendation) {
+          specLine = `\nTrend: ${escapeMd(analysis.recommendation)} \\(${Math.round(analysis.confidence * 100)}%\\)`;
+        }
+      } catch { /* skip */ }
     }
 
-    const text = lines.join("\n");
+    const text = `📊 *5-Round Digest*\n` +
+      `Rounds: ${totalRounds} complete\n` +
+      `Alpha wins: ${alphaWins} · Beta wins: ${betaWins}` +
+      specLine;
+
     await this._safeTelegramSend(text);
   }
 

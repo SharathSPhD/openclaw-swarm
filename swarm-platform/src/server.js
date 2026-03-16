@@ -1481,7 +1481,8 @@ async function startAutonomousLoop() {
     objectivePerformanceTracker: objectivePerformanceTrackerInstance,
     agentMemory,
     ragPipeline,
-    fineTuningPrep
+    fineTuningPrep,
+    specializationEngine: specializationEngineInstance
   });
 
   autonomousLoop = new AutonomousLoop({
