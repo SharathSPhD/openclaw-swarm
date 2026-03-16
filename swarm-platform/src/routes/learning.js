@@ -1,4 +1,17 @@
 export function registerLearningRoutes(app, deps) {
+  app.get("/api/learning/summary", (_req, res) => {
+    const teamLearningInstance = deps.teamLearningInstance;
+    if (!teamLearningInstance) {
+      return res.json({ ok: false, reason: "not_initialized" });
+    }
+    res.json({
+      ok: true,
+      performanceRecords: (teamLearningInstance.performanceRecords || []).length,
+      roundHistory: (teamLearningInstance.roundHistory || []).length,
+      lastRound: (teamLearningInstance.roundHistory || []).slice(-1)[0] || null
+    });
+  });
+
   app.get("/api/learning/recommendations/:teamId", async (req, res) => {
     if (!deps.teamLearningInstance) return res.json({ avoidModels: [], preferModels: [], roleOverrides: {} });
     const recs = await deps.teamLearningInstance.getModelRecommendations(req.params.teamId);

@@ -3,6 +3,8 @@ import { buildEvaluationPrompt, extractAndValidate } from "./structuredEvaluator
 import { ObjectivePerformanceTracker } from "./objectivePerformance.js";
 import { escapeMd } from "./telegramRelay.js";
 
+import crypto from "node:crypto";
+
 export class CompetitiveCoordinator {
   constructor({
     runTask,
@@ -110,7 +112,58 @@ export class CompetitiveCoordinator {
 
       console.log("[competitive] Fork phase: dispatching to both teams");
 
+      // Get model recommendations for both teams before dispatch
+      if (this.teamLearning) {
+        const alphaRecs = this.teamLearning.getModelRecommendations("team-alpha");
+        const betaRecs = this.teamLearning.getModelRecommendations("team-beta");
+        
+        if (alphaRecs?.roleOverrides && Object.keys(alphaRecs.roleOverrides).length > 0) {
+          console.log(`[competitive] Applying model recommendations for team-alpha:`, alphaRecs.roleOverrides);
+          this._modelOverrides = this._modelOverrides || {};
+          this._modelOverrides["team-alpha"] = alphaRecs.roleOverrides;
+        }
+        
+        if (betaRecs?.roleOverrides && Object.keys(betaRecs.roleOverrides).length > 0) {
+          console.log(`[competitive] Applying model recommendations for team-beta:`, betaRecs.roleOverrides);
+          this._modelOverrides = this._modelOverrides || {};
+          this._modelOverrides["team-beta"] = betaRecs.roleOverrides;
+        }
+      }
+
       const [alphaResult, betaResult] = await this._forkToTeams(objective, objectiveId);
+
+      // Emit agent.message events for alpha and beta outputs
+      if (alphaResult.finalOutput) {
+        await this.emitEvent(this.createEvent({
+          id: crypto.randomUUID(),
+          type: "agent.message",
+          teamId: "team-alpha",
+          source: "alpha-coordinator",
+          payload: {
+            role: "coordinator",
+            content: alphaResult.finalOutput.slice(0, 1000),
+            taskId: `${objectiveId}-alpha`,
+            objectiveId,
+            phase: "competitive"
+          }
+        })).catch(() => {});
+      }
+
+      if (betaResult.finalOutput) {
+        await this.emitEvent(this.createEvent({
+          id: crypto.randomUUID(),
+          type: "agent.message",
+          teamId: "team-beta",
+          source: "beta-coordinator",
+          payload: {
+            role: "coordinator",
+            content: betaResult.finalOutput.slice(0, 1000),
+            taskId: `${objectiveId}-beta`,
+            objectiveId,
+            phase: "competitive"
+          }
+        })).catch(() => {});
+      }
 
       // Phase 2: Evaluate - program lead picks the winner
       this.currentPhase = "evaluating";
@@ -179,6 +232,23 @@ export class CompetitiveCoordinator {
 
       const winnerOutput = winnerTeam === "team-alpha" ? alphaResult : betaResult;
       const gammaResult = await this._implementWinner(winnerOutput, objective, objectiveId);
+
+      // Emit agent.message event for gamma output
+      if (gammaResult.finalOutput) {
+        await this.emitEvent(this.createEvent({
+          id: crypto.randomUUID(),
+          type: "agent.message",
+          teamId: "team-gamma",
+          source: "gamma-coordinator",
+          payload: {
+            role: "coordinator",
+            content: gammaResult.finalOutput.slice(0, 1000),
+            taskId: `${objectiveId}-gamma`,
+            objectiveId,
+            phase: "competitive"
+          }
+        })).catch(() => {});
+      }
 
       // Gamma implements but does not earn competitive points (only logs work)
 

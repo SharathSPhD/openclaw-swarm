@@ -134,4 +134,23 @@ export function registerCompetitiveRoutes(app, deps) {
       res.status(500).json({ error: err?.message || "unknown" });
     }
   });
+
+  app.get("/api/competitive/agent-messages", (req, res) => {
+    const { teamId, limit = 100 } = req.query;
+    const events = deps.store.getEvents(deps.store.maxEvents || 2000)
+      .filter(e => e.type === "agent.message" && e.payload?.phase === "competitive")
+      .filter(e => !teamId || e.teamId === teamId)
+      .slice(-Number(limit));
+    res.json({
+      messages: events.map(e => ({
+        id: e.id,
+        ts: e.ts,
+        teamId: e.teamId,
+        role: e.payload?.role,
+        content: e.payload?.content,
+        taskId: e.payload?.taskId,
+        objectiveId: e.payload?.objectiveId
+      }))
+    });
+  });
 }

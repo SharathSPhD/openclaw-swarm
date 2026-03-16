@@ -56,6 +56,12 @@ export class TeamLearning {
   }
 
   async recordTaskOutcome({ teamId, model, role, success, errorType, latencyMs, correctness, outputLength, roundId }) {
+    // Validation: handle missing or invalid fields gracefully
+    if (!teamId || !role || typeof success !== "boolean") {
+      console.warn("[teamLearning] recordTaskOutcome: missing required fields (teamId, role, success)");
+      return;
+    }
+
     // Always record to in-memory store (rolling window of 500 entries)
     const record = {
       teamId,
@@ -505,7 +511,8 @@ export class TeamLearning {
 
   async generateCrossTeamFeedback(roundResult) {
     const { winner, evaluation, alphaResult, betaResult, objectiveId } = roundResult;
-    if (!evaluation) return null;
+    if (!evaluation || !roundResult) return null;
+    if (!winner && !evaluation.winner) return null; // Guard against missing winner
 
     const winnerTeam = winner || evaluation.winner;
     const loserTeam = winnerTeam === "team-alpha" ? "team-beta" : "team-alpha";

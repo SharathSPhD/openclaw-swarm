@@ -28,6 +28,141 @@ function hashObjective(text) {
   return crypto.createHash("sha256").update(text.slice(0, 200)).digest("hex").slice(0, 16);
 }
 
+const OBJECTIVE_TEMPLATES = {
+  test_coverage: [
+    "Write unit tests for src/coordinator.js covering task decomposition edge cases",
+    "Add integration tests for /api/orchestrator/dispatch covering quota exceeded path",
+    "Add e2e test verifying competitive round produces competitive.merged event",
+    "Write tests for src/scoring.js ensuring penalty logic matches scoring_rules.json",
+    "Add tests for store.js getActiveTeamAgentCounts() with stale event handling",
+    "Cover src/policyEngine.js with tests for each policy rule",
+    "Add tests for modelCatalog.js role-to-model routing logic",
+    "Write snapshot tests for leaderboard score calculation",
+    "Add concurrency tests: two simultaneous dispatches to same team",
+    "Write tests for telegramRelay.js retry/backoff behavior"
+  ],
+  security_audit: [
+    "Audit all Express routes for missing authentication middleware in src/routes/",
+    "Check src/openclawRunner.js for command injection via task text input",
+    "Review data/teams.json for hardcoded secrets or API keys",
+    "Audit WebSocket message handling for unauthenticated write paths",
+    "Check src/coordinator.js for path traversal in worktree paths",
+    "Review src/telegramBot.js for SSRF via user-supplied URLs",
+    "Audit src/db.js for SQL injection in dynamic query construction",
+    "Check all file writes in src/store.js for directory traversal",
+    "Review CORS configuration in src/server.js for overly permissive origins",
+    "Audit src/admissionController.js for race conditions in load state transitions"
+  ],
+  error_handling: [
+    "Add error boundaries to all async paths in src/competitiveCoordinator.js",
+    "Improve error recovery in src/openclawRunner.js when subprocess times out",
+    "Add retry logic in src/modelCatalog.js for failed Ollama health checks",
+    "Handle JSON parse failures gracefully in src/store.js readEvents()",
+    "Add timeout handling to src/coordinator.js openclaw agent calls",
+    "Improve error messages in src/routes/orchestrator.js for 400 responses",
+    "Add graceful degradation in src/explorationEngine.js when git is unavailable",
+    "Handle Telegram API rate limits (429) in src/telegramRelay.js",
+    "Add process.uncaughtException handler in src/server.js",
+    "Improve error context in src/worktreeManager.js git operation failures"
+  ],
+  api_design: [
+    "Add pagination to /api/events endpoint with cursor-based navigation",
+    "Implement /api/teams/{id}/history showing per-team event timeline",
+    "Add filtering to /api/task-flow by status and date range",
+    "Design /api/competitive/replay to re-run a previous round",
+    "Add /api/metrics/latency-percentiles endpoint (p50/p95/p99)",
+    "Implement /api/admin/reset-scores for tournament management",
+    "Add /api/health/deep for deep dependency health check",
+    "Design /api/agents/active with SSE streaming instead of polling",
+    "Add /api/objectives/queue showing pending objectives with ETA",
+    "Implement /api/competitive/bracket showing round bracket for current session"
+  ],
+  performance_profiling: [
+    "Profile src/store.js readEvents() - reads full JSONL on every call, add in-memory cache",
+    "Identify slowest REST endpoints by adding timing middleware to src/server.js",
+    "Optimize src/scoring.js - recalculates full event history per leaderboard call",
+    "Reduce WebSocket broadcast frequency for high-frequency events",
+    "Profile src/modelCatalog.js Ollama discovery - runs on every model selection",
+    "Add memoization to src/store.js getLeaderboard() with 5s TTL",
+    "Optimize src/autonomousLoop.js objective generation - avoid blocking the event loop",
+    "Profile src/explorationEngine.js git operations - multiple git calls per analysis",
+    "Add connection pooling for repeated OpenClaw agent invocations",
+    "Measure and log p95 latency for each agent role in competitive rounds"
+  ],
+  documentation: [
+    "Document the competitive round lifecycle in docs/competitive-flow.md",
+    "Add JSDoc comments to all public methods in src/store.js",
+    "Write architecture decision record for the event sourcing pattern",
+    "Document model routing configuration in docs/model-routing.md",
+    "Add API reference for all /api/competitive/* endpoints",
+    "Write runbook for handling failed competitive rounds",
+    "Document the scoring algorithm with examples in docs/scoring.md",
+    "Add inline comments explaining the admission controller state machine",
+    "Write guide for adding new agent roles to the coordinator pipeline",
+    "Document the Telegram notification format and delivery guarantees"
+  ],
+  code_deduplication: [
+    "Identify and extract common event emission pattern shared across route handlers",
+    "Consolidate duplicate team score calculation in scoring.js and store.js",
+    "Extract shared validation logic from dispatch and competitive routes",
+    "Merge duplicate Telegram formatting code in telegramBot.js and telegramRelay.js",
+    "Deduplicate JSONL file reading logic across store.js, scoring.js, and routes",
+    "Extract common retry/backoff pattern from telegramRelay.js and openclawRunner.js",
+    "Consolidate WebSocket broadcast code scattered across route files",
+    "Remove duplicate timestamp formatting in store.js and coordinator.js",
+    "Extract shared model-tier lookup into a single utility function",
+    "Identify copy-paste between competitiveCoordinator.js and coordinator.js"
+  ],
+  dependency_audit: [
+    "Audit package.json for outdated dependencies with known CVEs",
+    "Check for unused npm packages that can be removed from package.json",
+    "Review ui/package.json for Vite/React version compatibility",
+    "Audit node_modules for packages with restrictive licenses",
+    "Check if express version supports http2/h3 upgrade path",
+    "Review ws package version against known WebSocket vulnerabilities",
+    "Audit dotenv usage - is --env-file flag sufficient or do we need dotenv package",
+    "Check for duplicate dependencies between ui/ and root package.json",
+    "Review build toolchain (vite, tsc) version alignment",
+    "Verify node:test compatibility with current Node.js version"
+  ],
+  edge_cases: [
+    "Handle empty teams.json gracefully in all routes that call store.getTeams()",
+    "Test behavior when events.jsonl is corrupted mid-line",
+    "Handle competitive round with 0 subtasks from coordinator gracefully",
+    "Test leaderboard when all teams have identical scores",
+    "Handle Telegram message > 4096 chars in all notification paths",
+    "Test behavior when openclaw binary is missing from PATH",
+    "Handle concurrent competitive rounds being triggered simultaneously",
+    "Test store behavior when disk is full during appendEvent",
+    "Handle WebSocket client disconnecting mid-broadcast",
+    "Test objective generation when git repo has no commits"
+  ],
+  observability: [
+    "Add structured logging with trace IDs to all competitive round phases",
+    "Implement /api/metrics/events-per-minute rate tracking endpoint",
+    "Add timing instrumentation to coordinator.js role execution phases",
+    "Create /api/debug/event-log endpoint showing last 20 raw events",
+    "Add WebSocket message rate metrics to server health endpoint",
+    "Implement per-team latency tracking in teamLearning.js",
+    "Add queue depth time-series to /api/metrics/summary",
+    "Instrument store.js appendEvent() with write latency logging",
+    "Add model selection decision logging in modelCatalog.js",
+    "Create /api/observability/trace showing full flow for a given taskId"
+  ]
+};
+
+const CATEGORY_ORDER = [
+  "test_coverage", "security_audit", "error_handling", "api_design",
+  "performance_profiling", "documentation", "code_deduplication",
+  "dependency_audit", "edge_cases", "observability"
+];
+
+// Per-category template index for systematic cycling
+const templateIndexes = {};
+CATEGORY_ORDER.forEach(cat => { templateIndexes[cat] = 0; });
+
+
+
 const META_OBJECTIVE_CATEGORIES = [
   {
     category: "code_improvement",
@@ -600,6 +735,51 @@ export class AutonomousLoop {
 
     return selfObj;
   }
+
+  // Public method for external objective generation (used by force-objective API)
+  generateObjectiveForCategory(category) {
+    const templates = OBJECTIVE_TEMPLATES[category];
+    if (!templates || templates.length === 0) return null;
+    
+    const idx = templateIndexes[category] || 0;
+    const selected = templates[idx % templates.length];
+    templateIndexes[category] = (idx + 1) % templates.length;
+    
+    return selected;
+  }
+
+  // Public method to dispatch an objective (used by force-objective API)
+  async dispatchObjective(objective, category) {
+    if (!objective || objective.length < 20) {
+      return { ok: false, reason: "objective_too_short" };
+    }
+
+    const objectiveId = `force-${Date.now()}`;
+    try {
+      await this.emitEvent(
+        this.createEvent({
+          type: "objective.created",
+          teamId: "program-lead",
+          source: "api-force",
+          payload: { objectiveId, objective, actorRole: "program-lead", source: "force-objective", category, isExternal: false }
+        })
+      );
+
+      let result;
+      if (this.competitiveCoordinator) {
+        result = await this.competitiveCoordinator.executeCompetitiveObjective({ objective, objectiveId, category });
+      } else if (this.coordinator) {
+        result = await this.coordinator.executeObjective({ teamId: "team-alpha", objective, objectiveId, maxIterations: 2 });
+      }
+
+      return { ok: true, objectiveId, status: result?.status || "dispatched" };
+    } catch (err) {
+      console.warn(`[autonomousLoop.dispatchObjective] Failed:`, err?.message);
+      return { ok: false, reason: err?.message || "unknown" };
+    }
+  }
+
+
 
   _gatherStats() {
     const leaderboard = this.store.getLeaderboard();

@@ -6,6 +6,7 @@
       "lead": "alpha-lead",
       "leaderRole": "team-lead",
       "programLead": "program-lead",
+      "competitiveRole": "contender",
       "roles": [
         "research",
         "build",
@@ -19,6 +20,35 @@
       "lead": "beta-lead",
       "leaderRole": "team-lead",
       "programLead": "program-lead",
+      "competitiveRole": "contender",
+      "roles": [
+        "research",
+        "build",
+        "critic",
+        "integrator"
+      ]
+    },
+    {
+      "id": "team-gamma",
+      "name": "Team Gamma",
+      "lead": "gamma-lead",
+      "leaderRole": "team-lead",
+      "programLead": "program-lead",
+      "competitiveRole": "implementer",
+      "roles": [
+        "research",
+        "build",
+        "critic",
+        "integrator"
+      ]
+    },
+    {
+      "id": "team-delta",
+      "name": "Team Delta",
+      "lead": "delta-lead",
+      "leaderRole": "team-lead",
+      "programLead": "program-lead",
+      "competitiveRole": "explorer",
       "roles": [
         "research",
         "build",

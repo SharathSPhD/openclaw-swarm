@@ -1,3 +1,5 @@
+import { requireAdmin } from "../auth.js";
+
 export function registerAutonomyRoutes(app, deps) {
   app.get("/api/dashboard/autonomy-status", (_req, res) => {
     const { autonomousLoop } = deps;
@@ -125,6 +127,93 @@ export function registerAutonomyRoutes(app, deps) {
       res.json({ messages, total: messages.length });
     } catch (err) {
       res.status(500).json({ error: err?.message || "unknown" });
+    }
+  });
+
+  // GET /api/autonomy/categories — list available objective categories
+  app.get("/api/autonomy/categories", (_req, res) => {
+    const CATEGORY_ORDER = [
+      "test_coverage", "security_audit", "error_handling", "api_design",
+      "performance_profiling", "documentation", "code_deduplication",
+      "dependency_audit", "edge_cases", "observability"
+    ];
+    res.json({
+      categories: CATEGORY_ORDER,
+      totalCategories: CATEGORY_ORDER.length,
+      currentCategoryIndex: deps.autonomousLoop?.categoryIndex || 0,
+      templatesPerCategory: 10
+    });
+  });
+
+  // POST /api/autonomy/force-objective — manually trigger objective generation for a specific category
+  app.post("/api/autonomy/force-objective", requireAdmin, async (req, res) => {
+    try {
+      const { category, template } = req.body || {};
+      
+      const validCategories = [
+        "test_coverage", "security_audit", "error_handling", "api_design",
+        "performance_profiling", "documentation", "code_deduplication",
+        "dependency_audit", "edge_cases", "observability"
+      ];
+      
+      if (category && !validCategories.includes(category)) {
+        return res.status(400).json({ 
+          ok: false, 
+          reason: "invalid_category",
+          message: `Category must be one of: ${validCategories.join(", ")}`
+        });
+      }
+      
+      const loop = deps.autonomousLoop;
+      if (!loop) {
+        return res.status(503).json({ 
+          ok: false, 
+          reason: "autonomous_loop_not_running",
+          message: "Autonomous loop not initialized"
+        });
+      }
+      
+      // Generate objective
+      let objective;
+      if (template && typeof template === "string") {
+        objective = template;
+      } else {
+        objective = loop.generateObjectiveForCategory?.(category || "test_coverage");
+      }
+      
+      if (!objective) {
+        return res.status(500).json({ 
+          ok: false, 
+          reason: "objective_generation_failed",
+          message: "Could not generate objective for category"
+        });
+      }
+      
+      // Dispatch it
+      const result = await loop.dispatchObjective?.(objective, category || "test_coverage");
+      
+      if (result?.ok) {
+        return res.json({ 
+          ok: true, 
+          objectiveId: result.objectiveId,
+          objective, 
+          category: category || "test_coverage", 
+          dispatched: true,
+          status: result.status
+        });
+      } else {
+        return res.status(500).json({
+          ok: false,
+          reason: result?.reason || "dispatch_failed",
+          message: result?.message || "Objective dispatch failed"
+        });
+      }
+    } catch (err) {
+      res.status(500).json({ 
+        ok: false, 
+        reason: "internal_error",
+        message: err?.message || "Unknown error"
+      });
     }
   });
 }
