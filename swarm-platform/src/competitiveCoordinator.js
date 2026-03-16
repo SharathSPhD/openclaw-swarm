@@ -58,6 +58,7 @@ export class CompetitiveCoordinator {
   }
 
   async executeCompetitiveObjective({ objective, objectiveId, category = "unknown" }) {
+    const roundStartTime = Date.now();
     this.currentObjective = { objectiveId, objective, category, phase: "forking" };
 
     await this.emitEvent(this.createEvent({
@@ -365,7 +366,8 @@ export class CompetitiveCoordinator {
       this.currentObjective = { ...this.currentObjective, phase: "completed" };
 
       // Send ONE condensed Telegram summary for the entire round
-      await this._sendRoundSummary({ objective, objectiveId, evaluation, winnerTeam, loserTeam, alphaResult, betaResult, gammaResult, mergeInfo, lessons, feedback });
+      const elapsedMs = Date.now() - roundStartTime;
+      await this._sendRoundSummary({ objective, objectiveId, evaluation, winnerTeam, loserTeam, alphaResult, betaResult, gammaResult, mergeInfo, lessons, feedback, elapsedMs });
 
       return fullResult;
 
@@ -575,9 +577,10 @@ Your task: Take the winning team's analysis/solution and implement it. If it inv
     });
   }
 
-  async _sendRoundSummary({ objective, objectiveId, evaluation, winnerTeam, loserTeam, alphaResult, betaResult, gammaResult, mergeInfo, lessons, feedback }) {
+  async _sendRoundSummary({ objective, objectiveId, evaluation, winnerTeam, loserTeam, alphaResult, betaResult, gammaResult, mergeInfo, lessons, feedback, elapsedMs }) {
     const lines = [];
-    lines.push(`*Round Complete: ${objectiveId}*`);
+    const elapsed = elapsedMs ? ` · ${Math.round(elapsedMs / 1000)}s` : "";
+    lines.push(`*Round Complete: ${objectiveId}*${elapsed}`);
     lines.push(`Objective: _${objective.slice(0, 200)}_`);
     lines.push("");
 

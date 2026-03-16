@@ -39,6 +39,13 @@ echo "[vLLM] Launching OpenAI-compatible API server..."
 echo "[vLLM] Endpoint will be: http://127.0.0.1:$PORT/v1"
 echo "[vLLM] Expected throughput: ~70 tok/s for 14B on GB10 (vs ~10 tok/s Ollama)"
 
+# vLLM was compiled against CUDA 12; use Ollama's bundled CUDA 12 runtime.
+# System has CUDA 13 (GB10 Blackwell) but Ollama ships libcudart.so.12 at v12.8.90
+# which is ABI-compatible with what vLLM expects.
+TORCH_LIB="$VENV/lib/python3.12/site-packages/torch/lib"
+OLLAMA_CUDA="/usr/local/lib/ollama/cuda_v12"
+export LD_LIBRARY_PATH="$TORCH_LIB:$OLLAMA_CUDA:${LD_LIBRARY_PATH:-}"
+
 exec "$VENV/bin/python" -m vllm.entrypoints.openai.api_server \
   --model "$MODEL" \
   --host 127.0.0.1 \
