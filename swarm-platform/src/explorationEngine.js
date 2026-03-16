@@ -70,7 +70,8 @@ export class ExplorationEngine {
   }
 
   _analyzeCodebase() {
-    const platformRoot = path.join(process.cwd(), 'swarm-platform');
+    // Server runs from swarm-platform/ directory; __dirname is swarm-platform/src/
+    const platformRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
     const srcDir = path.join(platformRoot, 'src');
     const testsDir = path.join(platformRoot, 'tests');
     
