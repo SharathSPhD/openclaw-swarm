@@ -483,17 +483,23 @@ interface AutonomyStatusData {
   running: boolean;
   currentObjective: { objectiveId?: string; objective?: string; category?: string; phase?: string } | null;
   currentPhase: string;
-  dynamicInterval: number;
-  baseInterval: number;
-  objectivesDispatched: number;
+  rounds: { dispatched: number; completed: number; failed: number; consecutiveFailures: number };
+  categories: { history: Array<{ category: string; ts: number }>; counts: Record<string, number>; totalCycled: number };
+  selfHealing: { totalFailures: number; recentFailureTypes: Record<string, number> };
+  qualityGate: { passed: number; failed: number; reverted: number; passRate: string };
+  schedule: { intervalMs: number; nextRoundEtaMs: number | null; nextRoundEtaHuman: string | null };
+  lastRoundTs: string | null;
 }
 
 function AutonomyStatus() {
-  const { data } = useApi<AutonomyStatusData>("/api/dashboard/autonomy-status", 4000);
+  const { data } = useApi<AutonomyStatusData>("/api/autonomy/status", 4000);
   if (!data) return null;
 
-  const intervalSec = Math.round((data.dynamicInterval || 90000) / 1000);
-  const isThrottled = data.dynamicInterval > data.baseInterval;
+  const intervalSec = Math.round((data.schedule?.intervalMs || 90000) / 1000);
+  const rounds = data.rounds || { dispatched: 0, completed: 0, failed: 0, consecutiveFailures: 0 };
+  const qg = data.qualityGate || { passed: 0, failed: 0, reverted: 0, passRate: "n/a" };
+  const passRate = qg.passRate !== "n/a" ? `${Math.round(Number(qg.passRate) * 100)}%` : "n/a";
+  const nextEta = data.schedule?.nextRoundEtaHuman;
 
   return (
     <div className="panel">
@@ -502,12 +508,32 @@ function AutonomyStatus() {
         <span className={`chip ${data.running ? "chip-elevated" : "chip-normal"}`}>
           {data.running ? "Running" : "Stopped"}
         </span>
-        <span className={`chip ${isThrottled ? "chip-elevated" : "chip-normal"}`}>
-          Interval: {intervalSec}s{isThrottled ? " (throttled)" : ""}
-        </span>
-        <span className="chip chip-normal">Dispatched: {data.objectivesDispatched}</span>
         {data.currentPhase !== "idle" && (
           <span className="chip chip-elevated">Phase: {data.currentPhase}</span>
+        )}
+        <span className="chip chip-normal">Interval: {intervalSec}s</span>
+        {nextEta && <span className="chip chip-normal">Next: {nextEta}</span>}
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+        <div>
+          <span className="text-swarm-muted">Rounds:</span>
+          <span className="ml-1 font-mono">{rounds.completed} done / {rounds.failed} failed</span>
+        </div>
+        <div>
+          <span className="text-swarm-muted">Quality Gate:</span>
+          <span className="ml-1 font-mono">{qg.passed}✓ {qg.failed}✗ ({passRate})</span>
+        </div>
+        {data.selfHealing?.totalFailures > 0 && (
+          <div>
+            <span className="text-swarm-muted">Self-heal:</span>
+            <span className="ml-1 font-mono text-yellow-400">{data.selfHealing.totalFailures} failures</span>
+          </div>
+        )}
+        {rounds.consecutiveFailures > 0 && (
+          <div>
+            <span className="text-swarm-muted">Consecutive fails:</span>
+            <span className="ml-1 font-mono text-red-400">{rounds.consecutiveFailures}</span>
+          </div>
         )}
       </div>
       {data.currentObjective?.objective && (

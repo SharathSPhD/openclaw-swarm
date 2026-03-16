@@ -9,6 +9,7 @@ const VALID_TYPES = new Set([
   "task.failed",
   "task.queued",
   "task.rejected",
+  "task.timeout",
   "team.chat",
   "model.selected",
   "control.team.pause",
@@ -44,6 +45,7 @@ const VALID_TYPES = new Set([
   "competitive.merged",
   "competitive.restarting",
   "competitive.quality-gate-failed",
+  "competitive.feedback",
   // Agent communication
   "agent.message",
   "agent.handoff",
