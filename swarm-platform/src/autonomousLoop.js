@@ -359,6 +359,9 @@ export class AutonomousLoop {
     this.maxConcurrentObjectives = 1;
     this.usedTemplateKeys = new Set(); // Track recently used template combinations
     this.projectRoot = projectRoot || process.cwd().replace(/\/swarm-platform.*/, "");
+    // Self-healing: track consecutive failures and failure patterns
+    this.consecutiveFailures = 0;
+    this.failureHistory = []; // rolling 10-entry history
   }
 
   async start() {
@@ -419,6 +422,19 @@ export class AutonomousLoop {
     while (this.running) {
       let objectiveId = `auto-${Date.now()}`;
       try {
+        // Resource-aware pre-dispatch check: skip round if system is under critical load
+        if (this.admissionController) {
+          try {
+            const decision = this.admissionController.decide({ role: "research" });
+            const state = decision?.state || "green";
+            if (state === "critical") {
+              console.log(`[autonomousLoop] System load critical — skipping round, backing off 3min`);
+              await new Promise((r) => setTimeout(r, 180000));
+              continue;
+            }
+          } catch { /* best-effort */ }
+        }
+
         const board = this.store.getObjectiveBoard(200);
         const activeCount = board.filter((o) => o.status === "active").length;
         if (activeCount >= this.maxConcurrentObjectives) {
@@ -472,6 +488,7 @@ export class AutonomousLoop {
         // Log category selection outcome for ROI tracking
         if (result.status === "completed") {
           console.log(`[autonomousLoop] Round complete: category=${category} objectiveId=${objectiveId}`);
+          this.consecutiveFailures = 0; // Reset on success
         }
 
         this.objectivesDispatched += 1;
@@ -495,13 +512,48 @@ export class AutonomousLoop {
       } catch (err) {
         const errMsg = err?.stack || err?.message || String(err);
         console.error(`[autonomousLoop] Round ${objectiveId} FAILED:`, errMsg);
+
+        // Self-healing: track failure type and attempt recovery
+        this.consecutiveFailures++;
+        const errType = this._classifyError(err);
+        this.failureHistory.push({ ts: Date.now(), type: errType, objectiveId, msg: errMsg.slice(0, 200) });
+        if (this.failureHistory.length > 10) this.failureHistory.shift();
+
         if (this.telegramBot && this.chatId) {
           try {
             await this.telegramBot.sendMessage(
               this.chatId,
-              `⚠️ Round ${objectiveId} failed: ${(err?.message || "unknown error").slice(0, 200)}`
+              `⚠️ Round ${objectiveId} failed (${errType}, #${this.consecutiveFailures}): ${(err?.message || "unknown error").slice(0, 200)}`
             );
           } catch { /* best-effort */ }
+        }
+
+        // After 2+ consecutive failures, try a simple fallback objective to recover
+        if (this.consecutiveFailures >= 2 && this.competitiveCoordinator) {
+          const fallbackObjective = this._getFallbackObjective(errType);
+          if (fallbackObjective) {
+            const fallbackId = `recovery-${Date.now()}`;
+            console.log(`[autonomousLoop] Self-healing: attempting fallback after ${this.consecutiveFailures} failures (${errType})`);
+            try {
+              await this.emitEvent(this.createEvent({
+                type: "objective.created",
+                teamId: "program-lead",
+                source: "autonomous-loop-recovery",
+                payload: { objectiveId: fallbackId, objective: fallbackObjective, actorRole: "program-lead", source: "recovery", category: "error_handling" }
+              }));
+              const recoveryResult = await this.competitiveCoordinator.executeCompetitiveObjective({
+                objective: fallbackObjective,
+                objectiveId: fallbackId,
+                category: "error_handling"
+              });
+              if (recoveryResult.status === "completed") {
+                this.consecutiveFailures = Math.max(0, this.consecutiveFailures - 1);
+                console.log(`[autonomousLoop] Recovery succeeded for ${fallbackId}`);
+              }
+            } catch (recoveryErr) {
+              console.warn(`[autonomousLoop] Recovery attempt also failed:`, recoveryErr?.message);
+            }
+          }
         }
       }
 
@@ -532,6 +584,28 @@ export class AutonomousLoop {
   stop() {
     this.running = false;
     console.log("[autonomousLoop] Stopped.");
+  }
+
+  // Classify an error for self-healing decisions
+  _classifyError(err) {
+    const msg = (err?.message || String(err)).toLowerCase();
+    if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("sigterm")) return "timeout";
+    if (msg.includes("json") || msg.includes("parse") || msg.includes("unexpected token")) return "parse_error";
+    if (msg.includes("model") || msg.includes("ollama") || msg.includes("no models")) return "model_unavailable";
+    if (msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("connect")) return "connection_error";
+    return "unknown";
+  }
+
+  // Return a simple, reliable fallback objective for recovery rounds
+  _getFallbackObjective(errType) {
+    const fallbacks = [
+      "Review and improve error handling in swarm-platform/src/server.js: ensure all async route handlers have proper try/catch blocks and return meaningful error responses with appropriate HTTP status codes.",
+      "Audit swarm-platform/src/coordinator.js for missing input validation: check that all public method parameters are validated before use, add guards for undefined/null/empty values.",
+      "Add JSDoc comments to the top 5 public methods in swarm-platform/src/store.js that currently lack documentation. Include @param and @returns annotations with accurate types.",
+      "Check swarm-platform/tests/unit/ for any test files missing edge case coverage. Add 1-2 targeted test assertions to increase coverage for the most commonly-failing code paths."
+    ];
+    // Rotate based on consecutive failure count to avoid repeating the same fallback
+    return fallbacks[this.consecutiveFailures % fallbacks.length];
   }
 
   async _preflightCheck(objective) {

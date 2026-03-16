@@ -356,6 +356,22 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, loadState, ts: new Date().toISOString() });
 });
 
+// Log tail for dashboard LogViewerPanel - reads last N lines from server log file
+app.get("/api/admin/log-tail", requireAdmin, (req, res) => {
+  const lines = Math.min(500, Math.max(1, Number(req.query.lines || 50)));
+  const logPath = process.env.SWARM_LOG_PATH || "/tmp/swarm-server.log";
+  try {
+    if (!fs.existsSync(logPath)) {
+      return res.json({ lines: [], logPath, note: "log file not found - set SWARM_LOG_PATH or redirect stdout to /tmp/swarm-server.log" });
+    }
+    const content = fs.readFileSync(logPath, "utf8");
+    const all = content.split("\n").filter(Boolean);
+    return res.json({ lines: all.slice(-lines), logPath });
+  } catch (err) {
+    return res.json({ lines: [], logPath, error: err?.message });
+  }
+});
+
 // vLLM / backend status - checks if fast inference backend is available
 // Backend: NVIDIA official Docker container (nvcr.io/nvidia/vllm:26.02-py3)
 // Start: scripts/start-vllm.sh  |  Stop: docker rm -f vllm-server
@@ -1397,12 +1413,31 @@ async function startAutonomousLoop() {
     createEvent,
     teamLearning: teamLearningInstance,
     explorationEngine: explorationEngineInstance,
-    admissionController: admission
+    admissionController: admission,
+    objectivePerformanceTracker: objectivePerformanceTrackerInstance,
+    projectRoot: path.resolve(__dirname, '..', '..')
   });
 
   // Routes were pre-registered with lazy refs before app.get("*"); just start the loop.
   setTimeout(() => autonomousLoop.start(), 5000);
   console.log("[server] Competitive autonomous loop will start in 5 seconds.");
+
+  // Periodic 30-minute health report to Telegram
+  setInterval(async () => {
+    if (!autonomousLoop?.running || !cfg.telegramToken) return;
+    try {
+      const stats = autonomousLoop._gatherStats();
+      const text = [
+        `*30-min Health Report*`,
+        `Scores: α=${stats.alphaScore} β=${stats.betaScore} γ=${stats.gammaScore}`,
+        `Completed: ${stats.completed} · Latency: ${Math.round(stats.avgLatency / 1000)}s`,
+        `Critic: ${Math.round(stats.criticApprovalRate * 100)}%`,
+        `Dispatched: ${autonomousLoop.objectivesDispatched} · Load: ${loadState}`,
+        `vLLM: ${vllmStatusCache.available ? "Online" : "Offline"}`
+      ].join("\n");
+      await telegramBot.sendMessage(cfg.telegramDefaultChatId, text).catch(() => {});
+    } catch { /* best-effort */ }
+  }, 30 * 60 * 1000);
 }
 
 async function gracefulShutdown(signal) {

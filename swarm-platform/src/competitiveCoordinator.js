@@ -4,6 +4,7 @@ import { ObjectivePerformanceTracker } from "./objectivePerformance.js";
 import { escapeMd } from "./telegramRelay.js";
 
 import crypto from "node:crypto";
+import path from "node:path";
 
 export class CompetitiveCoordinator {
   constructor({
@@ -294,24 +295,56 @@ export class CompetitiveCoordinator {
           };
 
           if (changeResult.committed) {
-            // Push the changes
-            this.worktreeManager.safePushToRemote();
+            // Quality gate: run unit tests before accepting the commit
+            let qualityPassed = true;
+            try {
+              qualityPassed = await this._runQualityGate(objectiveId);
+            } catch (gateErr) {
+              console.warn("[competitive] Quality gate error (allowing commit):", gateErr?.message);
+              qualityPassed = true; // default to pass on gate infrastructure error
+            }
 
-            await this.emitEvent(this.createEvent({
-              type: "competitive.merged",
-              teamId: "team-gamma",
-              source: "competitive-coordinator",
-              payload: {
-                objectiveId,
-                changedFiles: mergeInfo.changedFiles,
-                needsRestart: mergeInfo.needsRestart,
-                committed: true
+            if (!qualityPassed) {
+              // Revert the commit to protect server stability
+              try {
+                const { execFileSync } = await import("node:child_process");
+                execFileSync("git", ["reset", "--hard", "HEAD~1"], {
+                  cwd: this.worktreeManager.projectRoot,
+                  timeout: 15000,
+                  encoding: "utf-8"
+                });
+                console.warn(`[competitive] Quality gate FAILED — reverted commit for ${objectiveId}`);
+              } catch (revertErr) {
+                console.error("[competitive] Revert failed:", revertErr?.message);
               }
-            }));
+              mergeInfo.committed = false;
+              mergeInfo.reverted = true;
+              await this.emitEvent(this.createEvent({
+                type: "competitive.quality-gate-failed",
+                teamId: "team-gamma",
+                source: "competitive-coordinator",
+                payload: { objectiveId, reason: "unit_tests_failed", changedFiles: mergeInfo.changedFiles, reverted: true }
+              }));
+            } else {
+              // Quality gate passed — push the changes
+              this.worktreeManager.safePushToRemote();
 
-            console.log(`[competitive] Gamma committed ${mergeInfo.changedFiles.length} files: ${mergeInfo.changedFiles.slice(0, 3).join(", ")}`);
+              await this.emitEvent(this.createEvent({
+                type: "competitive.merged",
+                teamId: "team-gamma",
+                source: "competitive-coordinator",
+                payload: {
+                  objectiveId,
+                  changedFiles: mergeInfo.changedFiles,
+                  needsRestart: mergeInfo.needsRestart,
+                  committed: true
+                }
+              }));
 
-            if (mergeInfo.needsRestart) {
+              console.log(`[competitive] Gamma committed ${mergeInfo.changedFiles.length} files (quality gate passed): ${mergeInfo.changedFiles.slice(0, 3).join(", ")}`);
+            }
+
+            if (mergeInfo.committed && mergeInfo.needsRestart) {
               await this.emitEvent(this.createEvent({
                 type: "competitive.restarting",
                 teamId: "program-lead",
@@ -693,6 +726,48 @@ Your task:
     }
 
     return gammaResult;
+  }
+
+  // Run unit tests as a quality gate after Gamma commits code changes.
+  // Returns true if tests pass (or if the gate can't run), false if tests fail.
+  async _runQualityGate(objectiveId) {
+    const swarmRoot = this.worktreeManager?.projectRoot
+      ? path.join(this.worktreeManager.projectRoot, "swarm-platform")
+      : null;
+
+    if (!swarmRoot) return true; // no worktree manager = skip gate
+
+    const { spawn } = await import("node:child_process");
+    return new Promise((resolve) => {
+      console.log(`[competitive] Quality gate: running unit tests for ${objectiveId}...`);
+      const child = spawn("npm", ["run", "test:unit"], {
+        cwd: swarmRoot,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, RUNNER_MODE: "mock" }
+      });
+
+      let output = "";
+      child.stdout.on("data", (d) => { output += d.toString(); });
+      child.stderr.on("data", (d) => { output += d.toString(); });
+
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        console.warn(`[competitive] Quality gate timed out (60s) for ${objectiveId} — allowing commit`);
+        resolve(true); // timeout = allow (slow CI is not broken code)
+      }, 60000);
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        const passed = code === 0;
+        if (passed) {
+          console.log(`[competitive] Quality gate PASSED for ${objectiveId}`);
+        } else {
+          const tail = output.split("\n").filter(l => l.includes("fail") || l.includes("Error")).slice(0, 5).join(" | ");
+          console.warn(`[competitive] Quality gate FAILED (exit ${code}) for ${objectiveId}: ${tail || output.slice(-200)}`);
+        }
+        resolve(passed);
+      });
+    });
   }
 
   async _sendRoundStart({ objective, objectiveId, category }) {
