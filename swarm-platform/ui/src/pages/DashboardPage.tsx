@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { postApi, useApi } from "../hooks/useApi";
+import MetricsPanel from "../components/MetricsPanel";
 import type { SnapshotResponse, WsMessage, AgentInfo, SwarmEvent } from "../types";
 
 interface DashboardPageProps {
@@ -515,6 +516,7 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
       <SystemStatusBar snapshot={snapshot} />
+      <MetricsPanel />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <AutonomyStatus />
         <LearningPulse />
