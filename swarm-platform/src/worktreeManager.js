@@ -125,4 +125,40 @@ export class WorktreeManager {
       return [];
     }
   }
+
+  detectAndCommitMainChanges(objectiveId, description) {
+    try {
+      // Check for any unstaged changes in the main repo
+      const statusOut = this._git("status", "--porcelain");
+      if (!statusOut.trim()) return { changedFiles: [], committed: false };
+
+      const changedFiles = statusOut
+        .split("\n")
+        .filter(Boolean)
+        .map(line => line.trim().replace(/^[^\s]+\s+/, ""))
+        .filter(f => f.startsWith("swarm-platform/"));
+
+      if (changedFiles.length === 0) return { changedFiles: [], committed: false };
+
+      // Stage and commit only swarm-platform changes
+      this._git("add", "swarm-platform/");
+      const msg = `feat: gamma implements ${description.slice(0, 80)} [${objectiveId.slice(0, 8)}]`;
+      this._git("commit", "-m", msg);
+
+      console.log(`[worktree] Committed ${changedFiles.length} files for gamma: ${msg}`);
+      return { changedFiles, committed: true };
+    } catch (err) {
+      console.warn("[worktree] detectAndCommitMainChanges failed:", err?.message);
+      return { changedFiles: [], committed: false, error: err?.message };
+    }
+  }
+
+  safePushToRemote() {
+    try {
+      return this._git("push", "origin", "main");
+    } catch (err) {
+      console.warn("[worktree] push failed:", err?.message);
+      return null;
+    }
+  }
 }

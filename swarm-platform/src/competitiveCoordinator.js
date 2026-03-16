@@ -55,6 +55,7 @@ export class CompetitiveCoordinator {
 
   async _notify(text) {
     if (this.telegramBot && this.chatId) {
+      // TelegramBot.sendMessage uses Markdown by default
       await this.telegramBot.sendMessage(this.chatId, text).catch(() => {});
     }
   }
@@ -181,115 +182,92 @@ export class CompetitiveCoordinator {
 
       // Gamma implements but does not earn competitive points (only logs work)
 
-      // Phase 4: Merge - merge gamma's work into main and push
+      // Phase 4: Record what Gamma actually changed
       this.currentPhase = "merging";
       this.currentObjective.phase = "merging";
 
-      let mergeInfo = null;
-      if (this.worktreeManager && gammaWorktree) {
-        try {
-          mergeInfo = await this.worktreeManager.mergeAndPush("team-gamma", objectiveId);
+      let mergeInfo = { changedFiles: [], committed: false, needsRestart: false };
 
+      if (this.worktreeManager) {
+        try {
+          // Clean up the empty worktree branch first (it wasn't used)
+          try { this.worktreeManager.cleanupWorktree("team-gamma"); } catch { /* ok */ }
+
+          // Detect any actual changes Gamma wrote to the main repo
+          const changeResult = this.worktreeManager.detectAndCommitMainChanges(
+            objectiveId,
+            objective.slice(0, 80)
+          );
+
+          const needsRestart = (changeResult.changedFiles || []).some(
+            f => f.startsWith("swarm-platform/src/") || f.startsWith("swarm-platform/package")
+          );
+
+          mergeInfo = {
+            changedFiles: changeResult.changedFiles || [],
+            committed: changeResult.committed || false,
+            needsRestart,
+            error: changeResult.error || null
+          };
+
+          if (changeResult.committed) {
+            // Push the changes
+            this.worktreeManager.safePushToRemote();
+
+            await this.emitEvent(this.createEvent({
+              type: "competitive.merged",
+              teamId: "team-gamma",
+              source: "competitive-coordinator",
+              payload: {
+                objectiveId,
+                changedFiles: mergeInfo.changedFiles,
+                needsRestart: mergeInfo.needsRestart,
+                committed: true
+              }
+            }));
+
+            console.log(`[competitive] Gamma committed ${mergeInfo.changedFiles.length} files: ${mergeInfo.changedFiles.slice(0, 3).join(", ")}`);
+
+            if (mergeInfo.needsRestart) {
+              await this.emitEvent(this.createEvent({
+                type: "competitive.restarting",
+                teamId: "program-lead",
+                source: "competitive-coordinator",
+                payload: { objectiveId, reason: "server_code_changed", changedFiles: mergeInfo.changedFiles }
+              }));
+
+              console.log("[competitive] Server changes detected, scheduling restart via exit(42)");
+              setTimeout(() => process.exit(42), 3000);
+            }
+          } else {
+            // No file changes - emit merged with empty list (Gamma only produced analysis)
+            await this.emitEvent(this.createEvent({
+              type: "competitive.merged",
+              teamId: "team-gamma",
+              source: "competitive-coordinator",
+              payload: {
+                objectiveId,
+                changedFiles: [],
+                needsRestart: false,
+                committed: false,
+                note: changeResult.error || "no code changes detected"
+              }
+            }));
+            console.log("[competitive] Gamma produced no file changes (analysis/report only)");
+          }
+        } catch (err) {
+          console.warn("[competitive] Merge/commit failed:", err?.message);
+          // Still emit merged event so implementation-log has a record
           await this.emitEvent(this.createEvent({
             type: "competitive.merged",
             teamId: "team-gamma",
             source: "competitive-coordinator",
-            payload: {
-              objectiveId,
-              changedFiles: mergeInfo.changedFiles,
-              needsRestart: mergeInfo.needsRestart
-            }
+            payload: { objectiveId, changedFiles: [], needsRestart: false, error: err?.message }
           }));
-
-          // Gamma merge does not earn points (only logs work)
-
-          console.log(`[competitive] Merged. Changed: ${mergeInfo.changedFiles.length} files. Restart: ${mergeInfo.needsRestart}`);
-
-          if (mergeInfo.needsRestart) {
-            await this.emitEvent(this.createEvent({
-              type: "competitive.restarting",
-              teamId: "program-lead",
-              source: "competitive-coordinator",
-              payload: { objectiveId, reason: "server_code_changed" }
-            }));
-
-            console.log("[competitive] Self-update detected, scheduling graceful restart");
-            try {
-              const { execFileSync } = await import("node:child_process");
-              const fs = await import("node:fs");
-              const path = await import("node:path");
-              
-              setTimeout(() => {
-                // Check if ecosystem.config.cjs exists
-                const platformRoot = process.cwd();
-                const ecosystemPath = path.join(platformRoot, "ecosystem.config.cjs");
-                let hasEcosystem = fs.existsSync(ecosystemPath);
-                
-                let restarted = false;
-                
-                // If no ecosystem file, create one before attempting PM2 reload
-                if (!hasEcosystem) {
-                  try {
-                    const ecosystemConfig = `module.exports = {
-  apps: [{
-    name: 'swarm-platform',
-    script: './src/server.js',
-    cwd: '${platformRoot}',
-    env_file: '.env',
-    watch: false,
-    instances: 1,
-    exec_mode: 'fork',
-    restart_delay: 2000,
-    max_restarts: 10
-  }]
-};`;
-                    fs.writeFileSync(ecosystemPath, ecosystemConfig, 'utf-8');
-                    console.log("[competitive] Created ecosystem.config.cjs");
-                    hasEcosystem = true;
-                  } catch (err) {
-                    console.warn("[competitive] Failed to create ecosystem.config.cjs:", err?.message);
-                  }
-                }
-                
-                // Try PM2 first (production)
-                if (hasEcosystem) {
-                  try {
-                    // First check if PM2 is already managing this process
-                    try {
-                      execFileSync("pm2", ["list"], { timeout: 5000 });
-                      // PM2 is available, try reload
-                      execFileSync("pm2", ["reload", "swarm-platform"], { timeout: 10000 });
-                      restarted = true;
-                      console.log("[competitive] PM2 reload triggered successfully");
-                    } catch (checkErr) {
-                      // PM2 not managing the process yet, try start
-                      try {
-                        execFileSync("pm2", ["start", "ecosystem.config.cjs", "--no-daemon"], { timeout: 10000 });
-                        restarted = true;
-                        console.log("[competitive] PM2 started with ecosystem.config.cjs");
-                      } catch {
-                        console.warn("[competitive] PM2 start failed");
-                      }
-                    }
-                  } catch (err) {
-                    console.warn("[competitive] PM2 operation failed:", err?.message);
-                  }
-                }
-
-                if (!restarted) {
-                  console.log("[competitive] Using exit(42) for run-swarm.sh wrapper restart");
-                  process.exit(42);
-                }
-              }, 3000);
-            } catch { /* best effort restart */ }
-          }
-        } catch (err) {
-          console.warn("[competitive] Merge failed:", err?.message);
-          console.warn(`[competitive] Merge failed: ${err?.message}`);
         }
       }
 
-      // Cleanup worktrees
+      // Cleanup alpha/beta worktrees
       if (this.worktreeManager) {
         try { this.worktreeManager.cleanupWorktree("team-alpha"); } catch { /* ok */ }
         try { this.worktreeManager.cleanupWorktree("team-beta"); } catch { /* ok */ }
@@ -636,17 +614,17 @@ Your task:
 
   async _sendRoundStart({ objective, objectiveId, category }) {
     if (!this.telegramBot || !this.chatId) return;
-    
+
     const objEscaped = escapeMd(objective.slice(0, 120));
     const objEllipsis = objective.length > 120 ? "\\.\\.\\." : "";
     const catEscaped = escapeMd(category || "general");
-    
+
     const text = `🏁 *Round Starting*\n` +
       `Alpha vs Beta competing\n` +
       `Category: \`${catEscaped}\`\n` +
       `Objective: _${objEscaped}${objEllipsis}_`;
-    
-    await this.telegramBot.sendFormatted({ text, chatId: this.chatId }).catch(() => {});
+
+    await this.telegramBot.sendMessage(this.chatId, text, "MarkdownV2").catch(() => {});
   }
 
   async _sendRoundSummary({ objective, objectiveId, evaluation, winnerTeam, loserTeam, alphaResult, betaResult, gammaResult, mergeInfo, lessons, feedback, elapsedMs }) {
@@ -722,7 +700,7 @@ Your task:
     }
 
     const text = lines.join("\n");
-    await this.telegramBot.sendFormatted({ text, chatId: this.chatId }).catch(() => {});
+    await this.telegramBot.sendMessage(this.chatId, text, "MarkdownV2").catch(() => {});
   }
 
   getStatus() {

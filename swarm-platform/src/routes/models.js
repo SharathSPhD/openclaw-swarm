@@ -24,6 +24,31 @@ export function registerModelRoutes(app, deps) {
     });
   });
 
+  // GET /api/models/latency — chart-ready format for ModelLatencyChart component
+  app.get("/api/models/latency", (_req, res) => {
+    const modelLatency = readModelLatency();
+    const routing = loadModelRouting();
+    // Build array of { name, p50, p95, provider } for chart rendering
+    const models = [];
+    // From pre-computed latency file (scripts/benchmark_models.sh output)
+    const latencyData = modelLatency?.models || modelLatency || {};
+    for (const [id, data] of Object.entries(latencyData)) {
+      if (typeof data === "object" && (data.avgMs || data.p50Ms)) {
+        models.push({
+          name: id,
+          p50: data.p50Ms || data.avgMs || 0,
+          p95: data.p95Ms || null,
+          provider: routing?.modelCapabilities?.[id]?.provider || "ollama"
+        });
+      } else if (typeof data === "number") {
+        models.push({ name: id, p50: data, p95: null, provider: "ollama" });
+      }
+    }
+    // Sort by p50 latency ascending
+    models.sort((a, b) => a.p50 - b.p50);
+    res.json({ models });
+  });
+
   app.get("/api/model-metrics", async (req, res) => {
     const model = req.query.model || undefined;
     const role = req.query.role || undefined;

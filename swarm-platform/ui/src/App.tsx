@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useApi } from "./hooks/useApi";
 import type { SnapshotResponse } from "./types";
+import SystemStatusBar from "./components/SystemStatusBar";
 import DashboardPage from "./pages/DashboardPage";
 import ObjectivesPage from "./pages/ObjectivesPage";
 import TimelinePage from "./pages/TimelinePage";
@@ -10,6 +11,7 @@ import OpsPage from "./pages/OpsPage";
 import AuditPage from "./pages/AuditPage";
 import TelegramPage from "./pages/TelegramPage";
 import LeaderboardPage from "./pages/LeaderboardPage";
+import ConfigPage from "./pages/ConfigPage";
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: "⚡" },
@@ -19,6 +21,7 @@ const NAV_ITEMS = [
   { to: "/audit", label: "Audit", icon: "📋" },
   { to: "/telegram", label: "Telegram", icon: "💬" },
   { to: "/leaderboard", label: "Leaderboard", icon: "🏆" },
+  { to: "/config", label: "Config", icon: "⚙️" },
 ];
 
 export default function App() {
@@ -106,16 +109,20 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="flex-1 p-6 overflow-auto" style={{ backgroundColor: isDark ? "#0a0e17" : "#f3f4f6", color: isDark ? "#f3f4f6" : "#1f2937" }}>
-        <Routes>
-          <Route path="/" element={<DashboardPage snapshot={snapshot} lastMessage={lastMessage} />} />
-          <Route path="/objectives" element={<ObjectivesPage />} />
-          <Route path="/timeline" element={<TimelinePage />} />
-          <Route path="/ops" element={<OpsPage snapshot={snapshot} />} />
-          <Route path="/audit" element={<AuditPage />} />
-          <Route path="/telegram" element={<TelegramPage />} />
-          <Route path="/leaderboard" element={<LeaderboardPage />} />
-        </Routes>
+      <main className="flex-1 flex flex-col overflow-hidden" style={{ backgroundColor: isDark ? "#0a0e17" : "#f3f4f6", color: isDark ? "#f3f4f6" : "#1f2937" }}>
+        <SystemStatusBar wsConnected={connected} />
+        <div className="flex-1 p-6 overflow-auto">
+          <Routes>
+            <Route path="/" element={<DashboardPage snapshot={snapshot} lastMessage={lastMessage} />} />
+            <Route path="/objectives" element={<ObjectivesPage />} />
+            <Route path="/timeline" element={<TimelinePage />} />
+            <Route path="/ops" element={<OpsPage snapshot={snapshot} />} />
+            <Route path="/audit" element={<AuditPage />} />
+            <Route path="/telegram" element={<TelegramPage />} />
+            <Route path="/leaderboard" element={<LeaderboardPage />} />
+            <Route path="/config" element={<ConfigPage />} />
+          </Routes>
+        </div>
       </main>
     </div>
   );

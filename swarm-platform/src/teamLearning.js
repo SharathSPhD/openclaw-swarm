@@ -112,6 +112,11 @@ export class TeamLearning {
     existing.failures += tasksFailed || 0;
 
     this.categoryStats.set(key, existing);
+
+    // Telemetry: Log category ROI tracking
+    const avgScore = existing.totalScore / existing.attempts;
+    const successRate = ((existing.attempts - existing.failures) / existing.attempts * 100);
+    console.log(`[teamLearning] Category ROI: ${category} score_gain=${scoreGained || 0} avg_score=${avgScore.toFixed(2)} total_rounds=${existing.attempts} success_rate=${successRate.toFixed(1)}%`);
   }
 
   getTopCategories(limit = 3) {
@@ -326,12 +331,20 @@ export class TeamLearning {
       durationMs: totalDuration
     });
 
+    // Telemetry: Log round analysis summary
+    const uniqueCategories = [...new Set(lessons.map(l => l.category))];
+    console.log(`[teamLearning] Round ${objectiveId}: winner=${evaluation?.winner || 'unknown'}, lessons=${lessons.length}, categories=${uniqueCategories.join(',')}`);
+
     this.roundHistory.push({ roundId: objectiveId, lessons, ts: new Date().toISOString() });
     return lessons;
   }
 
   async getModelRecommendations(teamId) {
     // In file-based mode, compute from in-memory performanceRecords
+    // Data flow: recordTaskOutcome() → performanceRecords (rolling 500-entry window) →
+    // getModelRecommendations() analyzes recent 24h records → returns avoid/prefer/overrides
+    // This works in file-based mode (no PostgreSQL) because performanceRecords persists
+    // across analyzeRound() calls within the same session.
     if (!this.db?.pool) {
       const avoidModels = [];
       const preferModels = [];
@@ -407,6 +420,13 @@ export class TeamLearning {
             reason: `${avoid.model} has ${avoid.reason}; ${better.model} has ${(better.avgCorrectness * 100).toFixed(0)}% correctness`
           };
         }
+      }
+
+      // Telemetry: Log model recommendations
+      if (avoidModels.length > 0 || preferModels.length > 0) {
+        const avoidStr = avoidModels.map(a => `${a.model}(${a.role})`).join(',');
+        const preferStr = preferModels.map(p => `${p.model}(${p.role})`).join(',');
+        console.log(`[teamLearning] Recommendations for ${teamId}: avoid=[${avoidStr}], prefer=[${preferStr}]`);
       }
 
       return { avoidModels, preferModels, roleOverrides };
