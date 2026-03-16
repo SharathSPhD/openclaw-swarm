@@ -499,13 +499,15 @@ export class CompetitiveCoordinator {
         teamId: "team-alpha",
         objective,
         objectiveId: alphaId,
-        maxIterations: 2
+        maxIterations: 2,
+        modelOverrides: this._modelOverrides?.["team-alpha"] || null
       }),
       this.betaCoordinator.executeObjective({
         teamId: "team-beta",
         objective,
         objectiveId: betaId,
-        maxIterations: 2
+        maxIterations: 2,
+        modelOverrides: this._modelOverrides?.["team-beta"] || null
       })
     ]);
 

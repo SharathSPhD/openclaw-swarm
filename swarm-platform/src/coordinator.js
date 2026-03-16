@@ -229,7 +229,7 @@ Objective: ${objective}`;
     ];
   }
 
-  async executeDAG(teamId, subTasks, objectiveId, subTaskResults, { feedback = "", mode = "real" } = {}) {
+  async executeDAG(teamId, subTasks, objectiveId, subTaskResults, { feedback = "", mode = "real", modelOverrides = null } = {}) {
     const waves = topologicalSort(subTasks);
     const byId = new Map(subTasks.map((t) => [t.id, t]));
     const timeoutMs = this.timeoutMs;
@@ -245,7 +245,7 @@ Objective: ${objective}`;
         })
       );
 
-      const feedbackPrefix = waveIndex === 0 && feedback ? `Critic feedback from previous iteration:\n${feedback}\n\n` : "";
+      const feedbackPrefix = waveIndex === 0 && feedback ? `Critic feedback from previous iteration:\n${feedback.slice(0, 1500)}\n\n` : "";
 
       const waveResults = await Promise.all(
         wave.map((taskId) => {
@@ -255,10 +255,12 @@ Objective: ${objective}`;
           const depOutputs = (subTask.dependsOn || [])
             .map((depId) => subTaskResults.get(depId))
             .filter(Boolean);
+          const MAX_DEP_CONTEXT = 3000; // prevent context overflow on small-context models
           const dependencyContext = depOutputs
             .map((r) => (typeof r === "string" ? r : r?.output ?? r?.text ?? ""))
             .filter(Boolean)
-            .join("\n\n---\n\n");
+            .join("\n\n---\n\n")
+            .slice(0, MAX_DEP_CONTEXT);
 
           const baseTask = dependencyContext
             ? `Context from prior tasks:\n${dependencyContext}\n\nYour task: ${subTask.description}`
@@ -271,7 +273,12 @@ Objective: ${objective}`;
           }
 
           const chosen = this.chooseModelForRole({ role: subTask.role, modelTier: "standard", teamId });
-          const model = chosen?.selectedModel || "qwen2.5:7b";
+          const baseModel = chosen?.selectedModel || "qwen2.5:7b";
+          const roleOverride = modelOverrides?.[subTask.role];
+          const model = roleOverride?.prefer || baseModel;
+          if (roleOverride?.prefer && roleOverride.prefer !== baseModel) {
+            console.log(`[coordinator] Learning override ${teamId}/${subTask.role}: ${baseModel} → ${model} (${roleOverride.reason})`);
+          }
 
           // Emit message event before dispatching to agent
           this.emitEvent(this.createEvent({
@@ -490,7 +497,7 @@ Produce the final integrated output. Be concise and actionable.`;
     return result.stdout || "(no output)";
   }
 
-  async executeObjective({ teamId, objective, objectiveId, maxIterations = 2, onProgress }) {
+  async executeObjective({ teamId, objective, objectiveId, maxIterations = 2, onProgress, modelOverrides = null }) {
     const subTaskResults = new Map();
     let subTasks = [];
     let iterations = 0;
@@ -532,7 +539,7 @@ Produce the final integrated output. Be concise and actionable.`;
           })
         );
 
-        await this.executeDAG(teamId, subTasks, objectiveId, subTaskResults, { feedback, mode });
+        await this.executeDAG(teamId, subTasks, objectiveId, subTaskResults, { feedback, mode, modelOverrides });
 
         await this.emitEvent(
           this.createEvent({

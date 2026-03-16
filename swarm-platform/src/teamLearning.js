@@ -416,16 +416,18 @@ export class TeamLearning {
         }
       }
 
-      // Build role overrides
+      // Build role overrides — prefer same-role match, fall back to any well-performing model
       for (const avoid of avoidModels) {
-        const better = preferModels.find(p => p.role === avoid.role);
-        if (better) {
-          roleOverrides[avoid.role] = {
-            avoid: avoid.model,
-            prefer: better.model,
-            reason: `${avoid.model} has ${avoid.reason}; ${better.model} has ${(better.avgCorrectness * 100).toFixed(0)}% correctness`
-          };
-        }
+        const sameRole = preferModels.find(p => p.role === avoid.role);
+        const anyBetter = preferModels[0]; // best overall fallback
+        const prefer = sameRole || anyBetter;
+        roleOverrides[avoid.role] = {
+          avoid: avoid.model,
+          prefer: prefer?.model || null,
+          reason: prefer
+            ? `${avoid.model} has ${avoid.reason}; ${prefer.model} has ${(prefer.avgCorrectness * 100).toFixed(0)}% correctness${sameRole ? "" : " (cross-role suggestion)"}`
+            : `${avoid.model} has ${avoid.reason}; no preferred model identified yet`
+        };
       }
 
       // Telemetry: Log model recommendations
@@ -471,14 +473,16 @@ export class TeamLearning {
       }
 
       for (const avoid of avoidModels) {
-        const better = preferModels.find(p => p.role === avoid.role);
-        if (better) {
-          roleOverrides[avoid.role] = {
-            avoid: avoid.model,
-            prefer: better.model,
-            reason: `${avoid.model} has ${avoid.reason}; ${better.model} has ${(better.avgCorrectness * 100).toFixed(0)}% correctness`
-          };
-        }
+        const sameRole = preferModels.find(p => p.role === avoid.role);
+        const anyBetter = preferModels[0];
+        const prefer = sameRole || anyBetter;
+        roleOverrides[avoid.role] = {
+          avoid: avoid.model,
+          prefer: prefer?.model || null,
+          reason: prefer
+            ? `${avoid.model} has ${avoid.reason}; ${prefer.model} has ${(prefer.avgCorrectness * 100).toFixed(0)}% correctness${sameRole ? "" : " (cross-role suggestion)"}`
+            : `${avoid.model} has ${avoid.reason}; no preferred model identified yet`
+        };
       }
 
       return { avoidModels, preferModels, roleOverrides };
