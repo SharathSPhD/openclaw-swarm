@@ -494,7 +494,40 @@ Produce the final integrated output. Be concise and actionable.`;
       timeoutMs: this.timeoutMs
     });
 
-    return result.stdout || "(no output)";
+    const raw = result.stdout || "";
+    return this._extractText(raw) || "(no output)";
+  }
+
+  _extractText(raw) {
+    if (!raw) return "";
+    const trimmed = raw.trim();
+
+    const extractPayload = (obj) => {
+      const payloads = obj?.result?.payloads ?? obj?.payloads ?? [];
+      for (const p of payloads) {
+        if (p?.type === "text" && p?.text) return p.text;
+        if (p?.text) return p.text;
+      }
+      if (obj?.result?.text) return obj.result.text;
+      if (obj?.text) return obj.text;
+      return null;
+    };
+
+    try {
+      const obj = JSON.parse(trimmed);
+      const text = extractPayload(obj);
+      if (text) return text;
+    } catch { /* not JSON */ }
+
+    for (const line of trimmed.split("\n").filter(Boolean)) {
+      try {
+        const obj = JSON.parse(line);
+        const text = extractPayload(obj);
+        if (text) return text;
+      } catch { /* skip */ }
+    }
+
+    return trimmed;
   }
 
   async executeObjective({ teamId, objective, objectiveId, maxIterations = 2, onProgress, modelOverrides = null }) {

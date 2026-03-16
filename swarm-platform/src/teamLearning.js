@@ -17,6 +17,8 @@ export class TeamLearning {
     this.lessonRecords = [];
     // Category outcome tracking for objective ROI analysis
     this.categoryStats = new Map();
+    // Per-round win/loss tracking keyed by model for promotion/demotion
+    this.roundWinHistory = [];
   }
 
   async init() {
@@ -445,24 +447,43 @@ export class TeamLearning {
         }
       }
 
-      // Build role overrides — prefer same-role match, fall back to any well-performing model
+      // Incorporate win-rate data: promote models with high round-level win rates
+      const winRates = this.getWinRateByModel(teamId);
+      for (const [model, wr] of Object.entries(winRates)) {
+        if (wr.total >= 3 && wr.winRate >= 0.6) {
+          const existing = preferModels.find(p => p.model === model);
+          if (!existing) {
+            preferModels.push({ model, role: "any", avgCorrectness: wr.winRate, avgLatency: 0, winRate: wr.winRate });
+          }
+        }
+        if (wr.total >= 3 && wr.winRate <= 0.2) {
+          const existing = avoidModels.find(a => a.model === model);
+          if (!existing) {
+            avoidModels.push({ model, role: "any", failRate: 1 - wr.winRate, reason: `${wr.wins}/${wr.total} round wins (low win rate)` });
+          }
+        }
+      }
+
+      // Sort preferModels by win rate when available, then correctness
+      preferModels.sort((a, b) => (b.winRate || b.avgCorrectness) - (a.winRate || a.avgCorrectness));
+
+      // Build role overrides — prefer same-role match, fall back to highest win-rate model
       for (const avoid of avoidModels) {
         const sameRole = preferModels.find(p => p.role === avoid.role);
-        const anyBetter = preferModels[0]; // best overall fallback
-        const prefer = sameRole || anyBetter;
+        const bestOverall = preferModels[0];
+        const prefer = sameRole || bestOverall;
         roleOverrides[avoid.role] = {
           avoid: avoid.model,
           prefer: prefer?.model || null,
           reason: prefer
-            ? `${avoid.model} has ${avoid.reason}; ${prefer.model} has ${(prefer.avgCorrectness * 100).toFixed(0)}% correctness${sameRole ? "" : " (cross-role suggestion)"}`
-            : `${avoid.model} has ${avoid.reason}; no preferred model identified yet`
+            ? `${avoid.model} has ${avoid.reason}; ${prefer.model} has ${prefer.winRate ? (prefer.winRate * 100).toFixed(0) + "% win rate" : (prefer.avgCorrectness * 100).toFixed(0) + "% correctness"}${sameRole ? "" : " (cross-role)"}`
+            : `${avoid.model} has ${avoid.reason}; no preferred model yet`
         };
       }
 
-      // Telemetry: Log model recommendations
       if (avoidModels.length > 0 || preferModels.length > 0) {
         const avoidStr = avoidModels.map(a => `${a.model}(${a.role})`).join(',');
-        const preferStr = preferModels.map(p => `${p.model}(${p.role})`).join(',');
+        const preferStr = preferModels.map(p => `${p.model}(${p.role}${p.winRate ? ` WR:${(p.winRate*100).toFixed(0)}%` : ""})`).join(',');
         console.log(`[teamLearning] Recommendations for ${teamId}: avoid=[${avoidStr}], prefer=[${preferStr}]`);
       }
 
@@ -519,6 +540,40 @@ export class TeamLearning {
       console.warn("[teamLearning] getModelRecommendations:", err?.message);
       return { avoidModels: [], preferModels: [], roleOverrides: {} };
     }
+  }
+
+  recordRoundWin(teamId, roundId, modelsUsed, won) {
+    this.roundWinHistory.push({ teamId, roundId, modelsUsed, won, ts: Date.now() });
+    if (this.roundWinHistory.length > 200) {
+      this.roundWinHistory = this.roundWinHistory.slice(-200);
+    }
+  }
+
+  getWinRateByModel(teamId) {
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+    const recent = this.roundWinHistory.filter(r => r.teamId === teamId && r.ts > cutoff);
+    if (recent.length === 0) return {};
+
+    const modelStats = {};
+    for (const entry of recent) {
+      for (const [model, usage] of Object.entries(entry.modelsUsed || {})) {
+        if (!modelStats[model]) modelStats[model] = { wins: 0, losses: 0, total: 0 };
+        modelStats[model].total++;
+        if (entry.won) modelStats[model].wins++;
+        else modelStats[model].losses++;
+      }
+    }
+
+    const result = {};
+    for (const [model, stats] of Object.entries(modelStats)) {
+      result[model] = {
+        winRate: stats.total > 0 ? Number((stats.wins / stats.total).toFixed(2)) : 0,
+        wins: stats.wins,
+        losses: stats.losses,
+        total: stats.total
+      };
+    }
+    return result;
   }
 
   async getRecentLessons(teamId, limit = 20) {

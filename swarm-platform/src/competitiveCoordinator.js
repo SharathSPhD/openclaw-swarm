@@ -87,6 +87,8 @@ export class CompetitiveCoordinator {
     this.currentPhase = "idle";
     this.currentObjective = null;
     this.gammaDiscoveries = loadGammaDiscoveries();
+    this._consecutiveLosses = { "team-alpha": 0, "team-beta": 0 };
+    this._lastRoundFeedback = null;
   }
 
   async _notify(text) {
@@ -179,31 +181,58 @@ export class CompetitiveCoordinator {
         }
       }
 
-      // Inject agent memory context into objective for both teams
-      let enrichedObjective = objective;
+      // Per-team memory injection: each team gets its OWN memory + cross-team feedback
+      let alphaObjective = objective;
+      let betaObjective = objective;
+
       if (this.agentMemory) {
         const category = this.currentObjective?.category || "general";
         const alphaMemCtx = this.agentMemory.getMemoryContext("team-alpha", category);
         const betaMemCtx = this.agentMemory.getMemoryContext("team-beta", category);
-        
-        // Only append memory context if there are lessons to share
-        if (alphaMemCtx || betaMemCtx) {
-          const maxCtx = alphaMemCtx.length > betaMemCtx.length ? alphaMemCtx : betaMemCtx;
-          enrichedObjective = objective + (maxCtx ? `\n\n${maxCtx}` : "");
-          console.log(`[competitive] Memory context injected for teams (${alphaMemCtx.length} + ${betaMemCtx.length} chars)`);
+
+        if (alphaMemCtx) alphaObjective += `\n\n${alphaMemCtx}`;
+        if (betaMemCtx) betaObjective += `\n\n${betaMemCtx}`;
+
+        // Inject strategic (long-term) memory if available
+        const alphaStrategic = this.agentMemory.getStrategicContext?.("team-alpha");
+        const betaStrategic = this.agentMemory.getStrategicContext?.("team-beta");
+        if (alphaStrategic) alphaObjective += `\n\n${alphaStrategic}`;
+        if (betaStrategic) betaObjective += `\n\n${betaStrategic}`;
+
+        console.log(`[competitive] Per-team memory injected: alpha=${alphaMemCtx.length}+${alphaStrategic?.length || 0} beta=${betaMemCtx.length}+${betaStrategic?.length || 0} chars`);
+      }
+
+      // Inject cross-team feedback from previous round into losing team
+      if (this._lastRoundFeedback) {
+        const fb = this._lastRoundFeedback;
+        if (fb.loser === "team-alpha" && fb.feedbackToLoser) {
+          alphaObjective += `\n\nFEEDBACK FROM LAST ROUND (you lost): ${fb.feedbackToLoser}`;
+        } else if (fb.loser === "team-beta" && fb.feedbackToLoser) {
+          betaObjective += `\n\nFEEDBACK FROM LAST ROUND (you lost): ${fb.feedbackToLoser}`;
+        }
+
+        // Inject strategy shift for teams on a losing streak
+        const alphaLosses = this._consecutiveLosses?.["team-alpha"] || 0;
+        const betaLosses = this._consecutiveLosses?.["team-beta"] || 0;
+        if (alphaLosses >= 3) {
+          alphaObjective += `\n\nSTRATEGY SHIFT REQUIRED: You have lost ${alphaLosses} consecutive rounds. Change your approach fundamentally — try different decomposition, different tool usage patterns, or a different solution architecture.`;
+        }
+        if (betaLosses >= 3) {
+          betaObjective += `\n\nSTRATEGY SHIFT REQUIRED: You have lost ${betaLosses} consecutive rounds. Change your approach fundamentally — try different decomposition, different tool usage patterns, or a different solution architecture.`;
         }
       }
 
-      // Inject RAG context after memory context
+      // Inject RAG context (shared, not team-specific)
       if (this.ragPipeline) {
         const ragCtx = this.ragPipeline.getContext(objective, { topK: 3 });
         if (ragCtx) {
-          enrichedObjective = enrichedObjective + '\n\n' + ragCtx;
+          alphaObjective += '\n\n' + ragCtx;
+          betaObjective += '\n\n' + ragCtx;
           console.log(`[competitive] RAG context injected (${ragCtx.length} chars)`);
         }
       }
 
-      const [alphaResult, betaResult] = await this._forkToTeams(enrichedObjective, objectiveId);
+      const [alphaResult, betaResult] = await this._forkToTeams(alphaObjective, betaObjective, objectiveId);
 
       // Emit agent.message events for alpha and beta outputs
       if (alphaResult.finalOutput) {
@@ -280,6 +309,13 @@ export class CompetitiveCoordinator {
       }));
 
       console.log(`[competitive] Winner: ${winnerTeam}. Reasoning: ${evaluation.reasoning.slice(0, 100)}`);
+
+      // Track consecutive losses for strategy shift injection
+      this._consecutiveLosses[winnerTeam] = 0;
+      this._consecutiveLosses[loserTeam] = (this._consecutiveLosses[loserTeam] || 0) + 1;
+      if (this._consecutiveLosses[loserTeam] >= 3) {
+        console.log(`[competitive] ${loserTeam} on ${this._consecutiveLosses[loserTeam]}-round losing streak — strategy shift will trigger next round`);
+      }
 
       // Record fine-tuning data
       if (this.fineTuningPrep) {
@@ -559,6 +595,12 @@ export class CompetitiveCoordinator {
           }
           if (feedback) {
             console.log(`[competitive] Cross-team feedback: winner=${feedback.winner}, loser advice length=${feedback.feedbackToLoser?.message?.length || 0}`);
+            this._lastRoundFeedback = {
+              winner: winnerTeam,
+              loser: loserTeam,
+              feedbackToLoser: feedback.feedbackToLoser?.message?.slice(0, 500) || "",
+              feedbackToWinner: feedback.feedbackToWinner?.message?.slice(0, 500) || ""
+            };
           }
         } catch (err) {
           console.warn("[competitive] Learning analysis failed:", err?.message);
@@ -687,6 +729,12 @@ export class CompetitiveCoordinator {
           }
           
           console.log(`[competitive] Agent memories recorded: α=${alphaMem.length} lessons (models=${Object.keys(alphaModels).length}), β=${betaMem.length} lessons (models=${Object.keys(betaModels).length})`);
+
+          // Record round-level win/loss per model for win-rate tracking
+          if (this.teamLearning?.recordRoundWin) {
+            this.teamLearning.recordRoundWin("team-alpha", objectiveId, alphaModels, winnerTeam === "team-alpha");
+            this.teamLearning.recordRoundWin("team-beta", objectiveId, betaModels, winnerTeam === "team-beta");
+          }
         } catch (err) {
           console.warn("[competitive] Failed to record agent memories:", err?.message);
         }
@@ -718,21 +766,21 @@ export class CompetitiveCoordinator {
     }
   }
 
-  async _forkToTeams(objective, objectiveId) {
+  async _forkToTeams(alphaObjective, betaObjective, objectiveId) {
     const alphaId = `${objectiveId}-alpha`;
     const betaId = `${objectiveId}-beta`;
 
     const [alphaResult, betaResult] = await Promise.all([
       this.alphaCoordinator.executeObjective({
         teamId: "team-alpha",
-        objective,
+        objective: alphaObjective,
         objectiveId: alphaId,
         maxIterations: 2,
         modelOverrides: this._modelOverrides?.["team-alpha"] || null
       }),
       this.betaCoordinator.executeObjective({
         teamId: "team-beta",
-        objective,
+        objective: betaObjective,
         objectiveId: betaId,
         maxIterations: 2,
         modelOverrides: this._modelOverrides?.["team-beta"] || null
@@ -903,11 +951,12 @@ Winning team's output (use this as the basis for implementation):
 ${(winnerResult.finalOutput || "").slice(0, 4000)}
 
 Your task:
-1. IMPLEMENT: Take the winning team's analysis/solution and implement it in the codebase at /codebase/swarm-platform/. If it involves code changes, make them. If it's a report or analysis, refine and finalize it.
-2. EXPLORE: After implementing, briefly scan adjacent files and modules for obvious quick wins (bugs, performance issues, security gaps, error handling gaps). Do NOT make changes beyond the implementation task.
+1. IMPLEMENT: Take the winning team's analysis/solution and implement it as ACTUAL CODE CHANGES in the codebase at /codebase/swarm-platform/. You MUST write or modify files — do not just produce a report. Edit .js files in src/, add tests in tests/, or update UI files in ui/src/.
+2. EXPLORE: After implementing, briefly scan adjacent files for obvious quick wins.
 3. REPORT: Return your response in this structure:
-   IMPLEMENTATION: [what you implemented]
-   DISCOVERIES: [bulleted list of issues found in adjacent code, max 5]
+   IMPLEMENTATION: [what files you changed and what you did]
+   FILES_CHANGED: [list of file paths you modified]
+   DISCOVERIES: [bulleted list of issues found, max 5]
    RECOMMENDATIONS: [1-3 specific improvements for future rounds]`;
 
     const gammaId = `${objectiveId}-gamma`;
