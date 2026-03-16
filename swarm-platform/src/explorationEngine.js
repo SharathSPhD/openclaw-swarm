@@ -13,6 +13,7 @@ import path from "node:path";
 
 const OPENCLAW_HOME = process.env.OPENCLAW_HOME || path.join(process.env.HOME || "/root", ".openclaw");
 const SKILL_CATALOG_PATH = path.join(OPENCLAW_HOME, "skills");
+const WORKSPACE_SKILL_PATH = path.join(OPENCLAW_HOME, "workspace", "skills");
 
 const EXTERNAL_OBJECTIVE_TEMPLATES = [
   {
@@ -68,24 +69,53 @@ export class ExplorationEngine {
 
   discoverInstalledSkills() {
     const skills = [];
-    try {
-      if (!fs.existsSync(SKILL_CATALOG_PATH)) return skills;
-      const entries = fs.readdirSync(SKILL_CATALOG_PATH, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          const skillDir = path.join(SKILL_CATALOG_PATH, entry.name);
-          const metaPath = path.join(skillDir, "skill.json");
-          if (fs.existsSync(metaPath)) {
+    const seenIds = new Set();
+
+    const scanDir = (dirPath) => {
+      try {
+        if (!fs.existsSync(dirPath)) return;
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (seenIds.has(entry.name)) continue; // deduplicate
+
+          const skillDir = path.join(dirPath, entry.name);
+
+          // Try skill.json (legacy format)
+          const skillJsonPath = path.join(skillDir, "skill.json");
+          if (fs.existsSync(skillJsonPath)) {
             try {
-              const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-              skills.push({ id: entry.name, name: meta.name || entry.name, description: meta.description || "", path: skillDir, version: meta.version || "0.0.0" });
-            } catch { skills.push({ id: entry.name, name: entry.name, path: skillDir }); }
-          } else {
-            skills.push({ id: entry.name, name: entry.name, path: skillDir });
+              const meta = JSON.parse(fs.readFileSync(skillJsonPath, "utf-8"));
+              skills.push({ id: entry.name, name: meta.name || entry.name, description: meta.description || "", path: skillDir, version: meta.version || "0.0.0", source: "skill.json" });
+              seenIds.add(entry.name);
+              continue;
+            } catch { /* fall through */ }
+          }
+
+          // Try _meta.json + SKILL.md (workspace format)
+          const metaJsonPath = path.join(skillDir, "_meta.json");
+          const skillMdPath = path.join(skillDir, "SKILL.md");
+          if (fs.existsSync(metaJsonPath)) {
+            try {
+              const meta = JSON.parse(fs.readFileSync(metaJsonPath, "utf-8"));
+              let description = meta.description || "";
+              // Extract description from SKILL.md frontmatter if available
+              if (!description && fs.existsSync(skillMdPath)) {
+                const md = fs.readFileSync(skillMdPath, "utf-8");
+                const match = md.match(/^description:\s*(.+)$/m);
+                if (match) description = match[1].trim();
+              }
+              skills.push({ id: entry.name, name: meta.slug || entry.name, description, path: skillDir, version: meta.version || "1.0.0", source: "workspace" });
+              seenIds.add(entry.name);
+            } catch { skills.push({ id: entry.name, name: entry.name, path: skillDir, source: "workspace" }); seenIds.add(entry.name); }
           }
         }
-      }
-    } catch { /* skill dir may not exist */ }
+      } catch { /* dir may not exist */ }
+    };
+
+    scanDir(SKILL_CATALOG_PATH);
+    scanDir(WORKSPACE_SKILL_PATH);
+
     return skills;
   }
 
@@ -137,13 +167,33 @@ export class ExplorationEngine {
     const skills = this.discoverInstalledSkills();
     const tools = this.discoverInstalledTools();
 
+    const skillSummary = skills.length > 0
+      ? skills.map(s => `  - ${s.name}: ${s.description || "(no description)"}`).join("\n")
+      : "  (none installed)";
+
+    const toolSummary = tools.length > 0
+      ? tools.map(t => `  - ${t.agent}: ${t.tool}`).join("\n")
+      : "  (none configured in openclaw.json — agents use built-in web_search, read_file, write_file, execute_code)";
+
     return {
       category: "skill_discovery",
-      objective: `Audit the OpenClaw skill and tool ecosystem. Currently installed skills: ${skills.length} (${skills.map(s => s.name).join(", ") || "none"}). ` +
-        `Available agent tools: ${tools.length} (${tools.map(t => `${t.agent}:${t.tool}`).join(", ") || "none"}). ` +
-        `Research what additional skills or tools would most benefit the swarm platform. Consider: web search tools, code analysis tools, file management tools, and testing frameworks. ` +
-        `For each recommendation, explain how it would improve the platform's autonomous capabilities.`,
-      weight: 0.7,
+      objective: `Audit the OpenClaw skill and tool ecosystem for the swarm platform.
+
+CURRENTLY INSTALLED SKILLS (${skills.length}):
+${skillSummary}
+
+CONFIGURED AGENT TOOLS (${tools.length}):
+${toolSummary}
+
+Your task:
+1. Evaluate whether the installed skills are actually being used by agents (check if any skill behaviors appear in recent task outputs)
+2. Identify the top 3 skill/tool gaps that would most improve autonomous task completion
+3. For skills already installed (e.g., ddg-search), write example usage patterns that agents should know about
+4. Propose 2-3 new skill ideas specific to the swarm platform's research/build/critic/integrator pipeline
+5. Design a "skill-aware prompt injection" strategy: how should the swarm platform proactively include relevant skill instructions in agent prompts?
+
+Be specific and actionable. Reference the actual skill names and capabilities when making recommendations.`,
+      weight: 0.75,
       isExternal: true
     };
   }
