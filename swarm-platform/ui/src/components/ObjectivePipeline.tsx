@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import { useApi } from "../hooks/useApi";
+import type { WsMessage } from "../types";
 
 interface CompetitiveStatusData {
   phase: string;
+  roundsCompleted?: number;
   objective?: {
     objectiveId?: string;
     objective?: string;
@@ -21,16 +23,26 @@ interface AutonomyObjectivesData {
   completed: ObjectiveData[];
 }
 
+interface Props {
+  lastMessage?: WsMessage | null;
+}
+
 const PHASES = [
   { key: "idle", label: "Idle" },
-  { key: "generate", label: "Generate Objective" },
   { key: "forking", label: "Fork Alpha+Beta" },
   { key: "evaluating", label: "Evaluate" },
   { key: "implementing", label: "Gamma Implement" },
   { key: "merging", label: "Merge" },
 ];
 
-export default function ObjectivePipeline() {
+const WS_EVENT_TO_PHASE: Record<string, string> = {
+  "competitive.started": "forking",
+  "competitive.evaluated": "evaluating",
+  "competitive.implementing": "implementing",
+  "competitive.merged": "idle",
+};
+
+export default function ObjectivePipeline({ lastMessage }: Props) {
   const { data: competitiveStatus } = useApi<CompetitiveStatusData>("/api/competitive/status", 3000);
   const { data: autonomyStatus } = useApi<{ currentObjective: { objective?: string } | null }>(
     "/api/dashboard/autonomy-status",
@@ -41,9 +53,26 @@ export default function ObjectivePipeline() {
   const [phaseStartTime, setPhaseStartTime] = useState<number>(Date.now());
   const [elapsedSec, setElapsedSec] = useState<number>(0);
   const [lastPhase, setLastPhase] = useState<string>("idle");
+  const [wsPhase, setWsPhase] = useState<string | null>(null);
 
-  const currentPhase = competitiveStatus?.phase || "idle";
+  // Derive phase from WebSocket events for real-time updates
+  useEffect(() => {
+    if (!lastMessage?.type) return;
+    const mapped = WS_EVENT_TO_PHASE[lastMessage.type];
+    if (mapped) {
+      setWsPhase(mapped);
+    }
+  }, [lastMessage]);
+
+  const currentPhase = wsPhase || competitiveStatus?.phase || "idle";
   const currentObjective = autonomyStatus?.currentObjective?.objective || competitiveStatus?.objective?.objective;
+
+  // Clear wsPhase when polling catches up
+  useEffect(() => {
+    if (competitiveStatus?.phase && wsPhase && competitiveStatus.phase === wsPhase) {
+      setWsPhase(null);
+    }
+  }, [competitiveStatus?.phase, wsPhase]);
 
   // Track phase changes and reset timer
   useEffect(() => {
@@ -67,9 +96,15 @@ export default function ObjectivePipeline() {
   const completedObjectives = objectivesData?.completed || [];
   const recentObjectives = completedObjectives.slice(0, 5);
 
-  const isPhaseActive = (phase: string) => {
-    if (phase === "idle") return currentPhase === "idle";
-    return currentPhase === phase;
+  const phaseOrder = PHASES.map(p => p.key);
+  const currentIdx = phaseOrder.indexOf(currentPhase);
+
+  const getPhaseState = (phaseKey: string): "active" | "done" | "pending" => {
+    const idx = phaseOrder.indexOf(phaseKey);
+    if (phaseKey === currentPhase) return "active";
+    if (currentPhase === "idle") return "pending";
+    if (idx < currentIdx) return "done";
+    return "pending";
   };
 
   return (
@@ -88,20 +123,22 @@ export default function ObjectivePipeline() {
       <div className="mb-4 overflow-x-auto">
         <div className="flex gap-2 min-w-max">
           {PHASES.map((phase, idx) => {
-            const isActive = isPhaseActive(phase.key);
+            const state = getPhaseState(phase.key);
             return (
               <div key={phase.key} className="flex items-center gap-2">
                 <div
                   className={`w-20 px-2 py-2 rounded text-center text-[10px] font-medium transition-all ${
-                    isActive
+                    state === "active"
                       ? "bg-swarm-accent text-white animate-pulse"
+                      : state === "done"
+                      ? "bg-emerald-900/40 border border-emerald-500/40 text-emerald-400"
                       : "bg-swarm-bg border border-swarm-border text-swarm-muted"
                   }`}
                 >
-                  {phase.label}
+                  {state === "done" ? `${phase.label}` : phase.label}
                 </div>
                 {idx < PHASES.length - 1 && (
-                  <div className="text-swarm-muted text-xs">→</div>
+                  <div className={`text-xs ${state === "done" ? "text-emerald-500" : "text-swarm-muted"}`}>→</div>
                 )}
               </div>
             );

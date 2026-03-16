@@ -33,8 +33,8 @@ export default function SystemStatusBar({ wsConnected }: Props) {
 
         setStatus(prev => ({
           ...prev,
-          vllmOnline: metrics?.vllm?.online === true,
-          ollamaOnline: (metrics?.inventory?.total || 0) > 0,
+          vllmOnline: metrics?.vllm?.available === true,
+          ollamaOnline: metrics?.ollamaOk === true,
           uptimeMs: metrics?.uptime || 0,
           currentRound: competitive?.roundsCompleted || 0,
           phase: competitive?.phase || "idle",

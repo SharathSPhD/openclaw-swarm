@@ -483,6 +483,7 @@ function RecentAgentActivity({ events }: { events: SwarmEvent[] }) {
 
 interface AutonomyStatusData {
   running: boolean;
+  paused?: boolean;
   currentObjective: { objectiveId?: string; objective?: string; category?: string; phase?: string } | null;
   currentPhase: string;
   rounds: { dispatched: number; completed: number; failed: number; consecutiveFailures: number };
@@ -494,7 +495,18 @@ interface AutonomyStatusData {
 }
 
 function AutonomyStatus() {
-  const { data } = useApi<AutonomyStatusData>("/api/autonomy/status", 4000);
+  const { data, refetch } = useApi<AutonomyStatusData>("/api/autonomy/status", 4000);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const handleAction = async (action: "start" | "pause" | "stop") => {
+    setActionLoading(true);
+    try {
+      await postApi(`/api/autonomy/${action}`, {});
+      setTimeout(refetch, 500);
+    } catch { /* ignore */ }
+    setActionLoading(false);
+  };
+
   if (!data) return null;
 
   const intervalSec = Math.round((data.schedule?.intervalMs || 90000) / 1000);
@@ -503,13 +515,46 @@ function AutonomyStatus() {
   const passRate = qg.passRate !== "n/a" ? `${Math.round(Number(qg.passRate) * 100)}%` : "n/a";
   const nextEta = data.schedule?.nextRoundEtaHuman;
 
+  const stateColor = data.paused ? "bg-yellow-500" : data.running ? "bg-emerald-500" : "bg-red-500";
+  const stateLabel = data.paused ? "Paused" : data.running ? "Running" : "Stopped";
+
   return (
     <div className="panel">
-      <h3 className="text-sm font-semibold mb-3">Autonomy Status</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold">Autonomy Status</h3>
+        <div className="flex items-center gap-2">
+          <div className={`w-2.5 h-2.5 rounded-full ${stateColor}`}
+            style={data.running && !data.paused ? { animation: "pulse 2s infinite" } : {}} />
+          <span className="text-xs font-mono">{stateLabel}</span>
+        </div>
+      </div>
+
+      {/* Control buttons */}
+      <div className="flex gap-2 mb-3">
+        <button
+          onClick={() => handleAction("start")}
+          disabled={actionLoading || (data.running && !data.paused)}
+          className="px-3 py-1.5 text-xs font-medium rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 disabled:cursor-not-allowed text-white"
+        >
+          Start
+        </button>
+        <button
+          onClick={() => handleAction("pause")}
+          disabled={actionLoading || !data.running || !!data.paused}
+          className="px-3 py-1.5 text-xs font-medium rounded bg-yellow-700 hover:bg-yellow-600 disabled:opacity-30 disabled:cursor-not-allowed text-white"
+        >
+          Pause
+        </button>
+        <button
+          onClick={() => handleAction("stop")}
+          disabled={actionLoading || !data.running}
+          className="px-3 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed text-white"
+        >
+          Stop
+        </button>
+      </div>
+
       <div className="flex flex-wrap gap-3 mb-3">
-        <span className={`chip ${data.running ? "chip-elevated" : "chip-normal"}`}>
-          {data.running ? "Running" : "Stopped"}
-        </span>
         {data.currentPhase !== "idle" && (
           <span className="chip chip-elevated">Phase: {data.currentPhase}</span>
         )}
@@ -523,7 +568,7 @@ function AutonomyStatus() {
         </div>
         <div>
           <span className="text-swarm-muted">Quality Gate:</span>
-          <span className="ml-1 font-mono">{qg.passed}✓ {qg.failed}✗ ({passRate})</span>
+          <span className="ml-1 font-mono">{qg.passed}pass {qg.failed}fail ({passRate})</span>
         </div>
         {data.selfHealing?.totalFailures > 0 && (
           <div>
@@ -640,7 +685,7 @@ export default function DashboardPage({ snapshot, lastMessage }: DashboardPagePr
       <DashboardHeader connected={connected} />
 
       {/* Objectives & Metrics */}
-      <ObjectivePipeline />
+      <ObjectivePipeline lastMessage={lastMessage} />
       <MetricsPanel />
 
       {/* Main Competitive Battle View */}

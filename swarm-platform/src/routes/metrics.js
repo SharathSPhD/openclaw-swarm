@@ -399,7 +399,8 @@ export function createMetricsRouter({ store, queueManager, modelCatalog }) {
           successRate: throughputRes.successRate,
           queueDepth: throughputRes.queueDepth
         },
-        vllm: vllmRes
+        vllm: vllmRes,
+        uptime: Math.round(process.uptime() * 1000)
       });
     } catch (err) {
       res.status(500).json({ error: "Failed to collect metrics", message: err.message });

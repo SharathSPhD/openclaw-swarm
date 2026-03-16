@@ -5,6 +5,30 @@ import { escapeMd } from "./telegramRelay.js";
 
 import crypto from "node:crypto";
 import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const GAMMA_DISCOVERIES_FILE = path.join(__dirname, "..", "data", "gamma_discoveries.json");
+
+function loadGammaDiscoveries() {
+  try {
+    if (fs.existsSync(GAMMA_DISCOVERIES_FILE)) {
+      const data = JSON.parse(fs.readFileSync(GAMMA_DISCOVERIES_FILE, "utf-8"));
+      return Array.isArray(data) ? data.slice(-20) : [];
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+function saveGammaDiscoveries(discoveries) {
+  try {
+    const dir = path.dirname(GAMMA_DISCOVERIES_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(GAMMA_DISCOVERIES_FILE, JSON.stringify(discoveries.slice(-20), null, 2), "utf-8");
+  } catch { /* non-critical */ }
+}
 
 export class CompetitiveCoordinator {
   constructor({
@@ -62,7 +86,7 @@ export class CompetitiveCoordinator {
 
     this.currentPhase = "idle";
     this.currentObjective = null;
-    this.gammaDiscoveries = []; // Store up to 20 recent gamma discoveries for Program Lead context
+    this.gammaDiscoveries = loadGammaDiscoveries();
   }
 
   async _notify(text) {
@@ -907,23 +931,33 @@ Your task:
       maxIterations: 2
     });
 
-    // Extract discoveries and recommendations from gamma output
+    // Extract discoveries and recommendations from gamma output (relaxed parsing)
     if (gammaResult.finalOutput) {
       try {
         const output = gammaResult.finalOutput;
-        const discoveriesMatch = output.match(/DISCOVERIES:\s*([\s\S]*?)(?=RECOMMENDATIONS:|$)/);
-        const recommendationsMatch = output.match(/RECOMMENDATIONS:\s*([\s\S]*?)$/);
+        const discoveriesMatch = output.match(/DISCOVER(?:IES|Y)[:\s]*([\s\S]*?)(?=RECOMMEND|IMPLEMENTATION|$)/i);
+        const recommendationsMatch = output.match(/RECOMMEND(?:ATIONS?)?[:\s]*([\s\S]*?)$/i);
 
-        if (discoveriesMatch || recommendationsMatch) {
+        let discoveries = discoveriesMatch ? discoveriesMatch[1].trim() : "";
+        let recommendations = recommendationsMatch ? recommendationsMatch[1].trim() : "";
+
+        // Fallback: if no structured sections, treat the last 500 chars as a discovery summary
+        if (!discoveries && !recommendations && output.length > 100) {
+          discoveries = output.slice(-500).trim();
+        }
+
+        if (discoveries || recommendations) {
           const entry = {
             ts: new Date().toISOString(),
-            discoveries: discoveriesMatch ? discoveriesMatch[1].trim() : "",
-            recommendations: recommendationsMatch ? recommendationsMatch[1].trim() : ""
+            objectiveId,
+            discoveries,
+            recommendations
           };
           this.gammaDiscoveries.push(entry);
           if (this.gammaDiscoveries.length > 20) {
-            this.gammaDiscoveries.shift(); // Keep rolling 20
+            this.gammaDiscoveries.shift();
           }
+          saveGammaDiscoveries(this.gammaDiscoveries);
           console.log("[gamma] Discoveries:", JSON.stringify(entry.discoveries.slice(0, 150)));
         }
       } catch (err) {
@@ -1073,7 +1107,8 @@ Your task:
   getStatus() {
     return {
       phase: this.currentPhase,
-      objective: this.currentObjective
+      objective: this.currentObjective,
+      roundsCompleted: this.roundsCompleted
     };
   }
 

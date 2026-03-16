@@ -45,6 +45,7 @@ import { registerFineTuningRoutes } from "./routes/finetuning.js";
 import { registerAiTechRoutes } from "./routes/aitech.js";
 import { ResourceRequests } from "./resourceRequests.js";
 import { registerRequestRoutes } from "./routes/requests.js";
+import { ResourceCleaner } from "./resourceCleaner.js";
 
 import { createMetricsRouter } from './routes/metrics.js';
 const __filename = fileURLToPath(import.meta.url);
@@ -1262,6 +1263,14 @@ registerRequestRoutes(app, {
   resourceRequests
 });
 
+// Resource cleaner: Docker pruning, disk/GPU monitoring
+const resourceCleaner = new ResourceCleaner();
+resourceCleaner.start();
+
+app.get("/api/system/resources", (_req, res) => {
+  res.json(resourceCleaner.getStatus());
+});
+
 registerLearningRoutes(app, {
   get teamLearningInstance() { return teamLearningInstance; }
 });
@@ -1442,6 +1451,7 @@ async function startAutonomousLoop() {
 
   teamLearningInstance = new TeamLearning({ db, store });
   await teamLearningInstance.init();
+  await teamLearningInstance.rebuildFromDb();
 
   objectivePerformanceTrackerInstance = new ObjectivePerformanceTracker({ db });
   await objectivePerformanceTrackerInstance.init();

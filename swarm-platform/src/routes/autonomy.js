@@ -174,6 +174,7 @@ export function registerAutonomyRoutes(app, deps) {
 
       res.json({
         running: loop?.running || false,
+        paused: loop?.paused || false,
         currentPhase,
         currentObjective,
         rounds: {
@@ -234,6 +235,34 @@ export function registerAutonomyRoutes(app, deps) {
       currentCategoryIndex: deps.autonomousLoop?.categoryIndex || 0,
       templatesPerCategory: 10
     });
+  });
+
+  // POST /api/autonomy/start — resume or start the autonomous loop
+  app.post("/api/autonomy/start", (req, res) => {
+    const loop = deps.autonomousLoop;
+    if (!loop) return res.status(503).json({ ok: false, reason: "not_initialized" });
+    if (loop.running && !loop.paused) return res.json({ ok: true, state: "already_running" });
+    loop.resume();
+    res.json({ ok: true, state: "running" });
+  });
+
+  // POST /api/autonomy/pause — pause the loop (current round finishes, no new rounds)
+  app.post("/api/autonomy/pause", (req, res) => {
+    const loop = deps.autonomousLoop;
+    if (!loop) return res.status(503).json({ ok: false, reason: "not_initialized" });
+    if (!loop.running) return res.json({ ok: true, state: "already_stopped" });
+    if (loop.paused) return res.json({ ok: true, state: "already_paused" });
+    loop.pause();
+    res.json({ ok: true, state: "paused" });
+  });
+
+  // POST /api/autonomy/stop — hard stop the loop
+  app.post("/api/autonomy/stop", (req, res) => {
+    const loop = deps.autonomousLoop;
+    if (!loop) return res.status(503).json({ ok: false, reason: "not_initialized" });
+    if (!loop.running) return res.json({ ok: true, state: "already_stopped" });
+    loop.stop();
+    res.json({ ok: true, state: "stopped" });
   });
 
   // POST /api/autonomy/force-objective — manually trigger objective generation for a specific category

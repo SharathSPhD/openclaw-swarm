@@ -390,8 +390,27 @@ export class AutonomousLoop {
 
   async start() {
     this.running = true;
+    this.paused = false;
     const mode = this.competitiveCoordinator ? "competitive (3-team)" : "single-team";
     console.log(`[autonomousLoop] Started in ${mode} mode.`);
+
+    // Heartbeat: write timestamp every 60s to detect DGX suspension
+    const heartbeatFile = path.join(
+      process.env.SWARM_DATA_DIR || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'data'),
+      'heartbeat.json'
+    );
+    this._heartbeatTimer = setInterval(() => {
+      try {
+        const now = Date.now();
+        let prev = {};
+        try { prev = JSON.parse(fs.readFileSync(heartbeatFile, 'utf8')); } catch { /* ignore */ }
+        const gap = prev.ts ? now - prev.ts : 0;
+        if (gap > 5 * 60 * 1000 && prev.ts) {
+          console.warn(`[autonomousLoop] Heartbeat gap ${Math.round(gap / 1000)}s — possible system suspension`);
+        }
+        fs.writeFileSync(heartbeatFile, JSON.stringify({ ts: now, uptime: process.uptime(), running: this.running, paused: this.paused }), 'utf8');
+      } catch { /* non-critical */ }
+    }, 60000);
 
     // Reconcile stale objectives from previous crashes
     const board = this.store.getObjectiveBoard(500);
@@ -444,6 +463,12 @@ export class AutonomousLoop {
     }
 
     while (this.running) {
+      // Pause check: sleep in 2s intervals until unpaused
+      while (this.paused && this.running) {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (!this.running) break;
+
       let objectiveId = `auto-${Date.now()}`;
       try {
         // Resource-aware pre-dispatch check: skip round if system is under critical load
@@ -638,7 +663,26 @@ export class AutonomousLoop {
 
   stop() {
     this.running = false;
+    this.paused = false;
+    if (this._heartbeatTimer) {
+      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer = null;
+    }
     console.log("[autonomousLoop] Stopped.");
+  }
+
+  pause() {
+    if (!this.running) return;
+    this.paused = true;
+    console.log("[autonomousLoop] Paused — current round will finish, no new rounds will start.");
+  }
+
+  resume() {
+    this.paused = false;
+    if (!this.running) {
+      this.start();
+    }
+    console.log("[autonomousLoop] Resumed.");
   }
 
   // Classify an error for self-healing decisions

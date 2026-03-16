@@ -55,6 +55,35 @@ export class TeamLearning {
     }
   }
 
+  async rebuildFromDb() {
+    if (!this.db?.pool) return;
+    try {
+      const { rows } = await this.db.pool.query(
+        `SELECT team_id, model, role, success, error_type, latency_ms, correctness, output_length, round_id, created_at
+         FROM model_performance
+         ORDER BY created_at DESC
+         LIMIT 500`
+      );
+      if (rows.length > 0) {
+        this.performanceRecords = rows.reverse().map(r => ({
+          teamId: r.team_id,
+          model: r.model,
+          role: r.role,
+          success: r.success,
+          errorType: r.error_type || null,
+          latencyMs: r.latency_ms || null,
+          correctness: r.correctness || null,
+          outputLength: r.output_length || 0,
+          roundId: r.round_id || null,
+          createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()
+        }));
+        console.log(`[teamLearning] Rebuilt ${this.performanceRecords.length} performance records from DB`);
+      }
+    } catch (err) {
+      console.warn("[teamLearning] rebuildFromDb failed:", err?.message);
+    }
+  }
+
   async recordTaskOutcome({ teamId, model, role, success, errorType, latencyMs, correctness, outputLength, roundId }) {
     // Validation: handle missing or invalid fields gracefully
     if (!teamId || !role || typeof success !== "boolean") {

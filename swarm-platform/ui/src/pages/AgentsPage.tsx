@@ -131,7 +131,10 @@ export default function AgentsPage() {
     if (!team) {
       return (
         <div className={`panel ${getTeamBgClass(teamId)} border`}>
-          <div className="text-center text-swarm-muted">Loading...</div>
+          <div className="text-center py-8">
+            <p className="text-swarm-muted text-sm">No performance data yet</p>
+            <p className="text-swarm-muted/60 text-xs mt-1">Data populates after competitive rounds complete</p>
+          </div>
         </div>
       );
     }
@@ -332,7 +335,7 @@ export default function AgentsPage() {
     const memories = recentMemories?.memories?.slice(0, 5) || [];
 
     if (!stats) {
-      return <p className="text-swarm-muted text-sm">Loading...</p>;
+      return <p className="text-swarm-muted text-sm">No memory data yet</p>;
     }
 
     const outcomeData = stats.recentOutcomes || [];
