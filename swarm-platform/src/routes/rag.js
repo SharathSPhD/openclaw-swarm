@@ -80,13 +80,11 @@ export function registerRagRoutes(app, deps) {
   // POST /api/rag/add (requireAdmin) - manually add a document
   app.post('/api/rag/add', (req, res) => {
     try {
-      const { requireAdmin } = require('../auth.js');
-
       if (!ragPipeline) {
         return res.status(503).json({ error: 'RAG pipeline not initialized' });
       }
 
-      // Check admin auth
+      // Check admin auth via Bearer token
       if (!req.headers.authorization || !req.headers.authorization.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Missing or invalid authorization header' });
       }

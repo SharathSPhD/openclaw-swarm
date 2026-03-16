@@ -1279,8 +1279,17 @@ registerAgentRoutes(app, {
   agentMemory
 });
 
+registerAiTechRoutes(app, {
+  aiTechExplorer,
+  requireAdmin
+});
+
 registerRagRoutes(app, {
   ragPipeline
+});
+
+registerFineTuningRoutes(app, {
+  fineTuningPrep
 });
 
 app.get("*", (req, res) => {
@@ -1444,7 +1453,7 @@ async function startAutonomousLoop() {
   });
   await specializationEngineInstance.init();
 
-  explorationEngineInstance = new ExplorationEngine({ db, store, teamLearning: teamLearningInstance, specializationEngine: specializationEngineInstance });
+  explorationEngineInstance = new ExplorationEngine({ db, store, teamLearning: teamLearningInstance, specializationEngine: specializationEngineInstance, aiTechExplorer });
 
   const runTaskWithTools = (opts) => runTask({ ...opts, explorationEngine: explorationEngineInstance });
 
